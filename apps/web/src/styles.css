@@ -1,0 +1,21 @@
+:root {
+  color: #17201c;
+  background: #f3f6f4;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  box-sizing: border-box;
+  max-width: 48rem;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 6rem 2rem;
+}
+
+p {
+  color: #486057;
+}

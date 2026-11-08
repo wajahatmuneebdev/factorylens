@@ -9,3 +9,22 @@ AGENTS.override.md
 
 # Local operating-system files
 .DS_Store
+
+# JavaScript and TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.py[cod]
+
+# Local environment overrides
+.env
+.env.*
+!.env.example
