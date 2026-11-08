@@ -19,9 +19,14 @@ general-purpose computer-vision platform.
 
 ## Project status
 
-Product planning and architecture are complete. Implementation has not started.
+Product planning, the first inspection contract, and architecture are complete.
+Application implementation has not started.
 
 ## Documentation
 
 Technical decisions and implementation boundaries are documented in
 [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+The first recorded-video scenario, Workflow boundary, prediction schema, event
+rules, sample media, and initial policy candidates are documented in
+[INSPECTION_CONTRACT.md](./INSPECTION_CONTRACT.md).
