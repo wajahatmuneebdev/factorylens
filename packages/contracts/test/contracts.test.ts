@@ -18,9 +18,17 @@ import {
 } from "../src/index";
 
 const fixturesUrl = new URL("../../../fixtures/contracts/", import.meta.url);
+const predictionFixturesUrl = new URL(
+  "../../../fixtures/predictions/",
+  import.meta.url,
+);
 
 function readFixture(name: string): unknown {
   return JSON.parse(readFileSync(new URL(name, fixturesUrl), "utf8"));
+}
+
+function readPredictionFixture(name: string): unknown {
+  return JSON.parse(readFileSync(new URL(name, predictionFixturesUrl), "utf8"));
 }
 
 describe("browser API contracts", () => {
@@ -143,6 +151,18 @@ describe("worker-facing fixtures", () => {
       timeBase: "milliseconds",
       sampleRateFps: 5,
     });
+  });
+
+  it("validates the deterministic assembly-line prediction fixture", () => {
+    const fixture = PredictionArtifactV1Schema.parse(
+      readPredictionFixture("assembly-line-no-hard-hat.expected.json"),
+    );
+
+    expect(fixture.frames).toHaveLength(10);
+    expect(fixture.events).toMatchObject([
+      { type: "missing_hard_hat", startMs: 0, endMs: 2000 },
+    ]);
+    expect(fixture.summary.missingHardHatEventCount).toBe(1);
   });
 
   it("rejects non-monotonic frame timestamps", () => {

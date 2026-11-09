@@ -1,0 +1,267 @@
+{
+  "schemaVersion": 1,
+  "inspectionId": "018f4f72-3d3a-7c1c-b10b-f2a7c849e830",
+  "source": {
+    "width": 1840,
+    "height": 1080,
+    "durationMs": 2000,
+    "timeBase": "milliseconds",
+    "sampleRateFps": 5
+  },
+  "workflow": {
+    "key": "factory-safety-v1",
+    "workflowId": "hard-hat-compliance-v1",
+    "workflowVersion": "1",
+    "modelId": "construction-site-safety/27",
+    "fingerprint": "sha256:6f17fa35c215660fe398df8bd98157759817bfa859be8065ae1c19312ef07d62"
+  },
+  "classes": ["Person", "Hardhat", "NO-Hardhat"],
+  "frames": [
+    {
+      "timestampMs": 0,
+      "predictions": [
+        {
+          "id": "f000000-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 610, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000000-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.91,
+          "box": { "x": 614, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000000-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1310, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 200,
+      "predictions": [
+        {
+          "id": "f000001-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 614, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000001-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.93,
+          "box": { "x": 618, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000001-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1306, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 400,
+      "predictions": [
+        {
+          "id": "f000002-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 618, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000002-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.94,
+          "box": { "x": 622, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000002-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1302, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 600,
+      "predictions": [
+        {
+          "id": "f000003-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 622, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000003-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.92,
+          "box": { "x": 626, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000003-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1298, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 800,
+      "predictions": [
+        {
+          "id": "f000004-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 626, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000004-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.95,
+          "box": { "x": 630, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000004-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1294, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 1000,
+      "predictions": [
+        {
+          "id": "f000005-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 630, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000005-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.93,
+          "box": { "x": 634, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000005-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1290, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 1200,
+      "predictions": [
+        {
+          "id": "f000006-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 634, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000006-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.91,
+          "box": { "x": 638, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000006-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1286, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 1400,
+      "predictions": [
+        {
+          "id": "f000007-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 638, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000007-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.94,
+          "box": { "x": 642, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000007-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1282, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 1600,
+      "predictions": [
+        {
+          "id": "f000008-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 642, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000008-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.92,
+          "box": { "x": 646, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000008-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1278, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 1800,
+      "predictions": [
+        {
+          "id": "f000009-p000",
+          "className": "Person",
+          "confidence": 0.96,
+          "box": { "x": 646, "y": 565, "width": 230, "height": 650 }
+        },
+        {
+          "id": "f000009-p001",
+          "className": "NO-Hardhat",
+          "confidence": 0.93,
+          "box": { "x": 650, "y": 238, "width": 92, "height": 108 }
+        },
+        {
+          "id": "f000009-p002",
+          "className": "Hardhat",
+          "confidence": 0.88,
+          "box": { "x": 1274, "y": 250, "width": 104, "height": 94 }
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "event-000",
+      "type": "missing_hard_hat",
+      "label": "Missing hard hat",
+      "startMs": 0,
+      "endMs": 2000,
+      "peakConfidence": 0.95,
+      "qualifyingFrameCount": 10
+    }
+  ],
+  "summary": {
+    "missingHardHatEventCount": 1,
+    "qualifyingFrameCount": 10,
+    "peakConfidence": 0.95
+  }
+}
