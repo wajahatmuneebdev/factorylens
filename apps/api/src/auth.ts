@@ -11,10 +11,19 @@ import {
   GoogleAuthRequestSchema,
   type User,
 } from "@factorylens/contracts";
-import type { Express, Request, Response } from "express";
+import type { Express, Request } from "express";
 import { z } from "zod";
 
-const SESSION_COOKIE_NAME = "__Host-factorylens_session";
+import {
+  authenticatedUser,
+  clearSessionCookie,
+  hashSessionToken,
+  readCookie,
+  requireSession,
+  SESSION_COOKIE_NAME,
+  type SessionStore,
+} from "./session.js";
+
 const TRANSACTION_COOKIE_NAME = "factorylens_oidc";
 const TRANSACTION_COOKIE_PATH = "/auth/google/callback";
 const TRANSACTION_LIFETIME_MS = 10 * 60 * 1000;
@@ -57,14 +66,13 @@ export interface OidcProvider {
   ): Promise<OidcIdentity>;
 }
 
-export interface AuthStore {
+export interface AuthStore extends SessionStore {
   createSession(
     identity: OidcIdentity,
     tokenHash: string,
     expiresAt: Date,
     now: Date,
   ): Promise<User>;
-  findActiveUser(tokenHash: string, now: Date): Promise<User | null>;
   revokeSession(tokenHash: string, now: Date): Promise<void>;
 }
 
@@ -75,32 +83,6 @@ export interface AuthDependencies {
   store: AuthStore;
   transactionSecret: string;
   now?: () => Date;
-}
-
-function tokenHash(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function readCookie(request: Request, name: string): string | null {
-  const header = request.get("cookie");
-  if (!header) {
-    return null;
-  }
-
-  for (const entry of header.split(";")) {
-    const separator = entry.indexOf("=");
-    if (separator === -1 || entry.slice(0, separator).trim() !== name) {
-      continue;
-    }
-
-    try {
-      return decodeURIComponent(entry.slice(separator + 1).trim());
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
 }
 
 function sealTransaction(
@@ -171,25 +153,6 @@ function callbackUrl(request: Request, configuredCallbackUrl: URL): URL {
   return current;
 }
 
-function sendAuthenticationRequired(response: Response): void {
-  response.status(401).json({
-    error: {
-      code: "authentication_required",
-      category: "authorization",
-      message: "Sign in to continue.",
-    },
-  });
-}
-
-function clearSessionCookie(response: Response): void {
-  response.clearCookie(SESSION_COOKIE_NAME, {
-    httpOnly: true,
-    path: "/",
-    sameSite: "lax",
-    secure: true,
-  });
-}
-
 export function registerAuthRoutes(
   app: Express,
   dependencies: AuthDependencies,
@@ -205,13 +168,15 @@ export function registerAuthRoutes(
 
   const now = dependencies.now ?? (() => new Date());
 
-  app.use(["/auth", "/api/me"], (_request, response, next) => {
+  app.use(["/auth", "/api"], (_request, response, next) => {
     response.set({
       "Cache-Control": "no-store",
       "Referrer-Policy": "no-referrer",
     });
     next();
   });
+
+  app.use("/api", requireSession({ store: dependencies.store, now }));
 
   app.get("/auth/google", async (request, response) => {
     const parsed = GoogleAuthRequestSchema.safeParse(request.query);
@@ -310,7 +275,7 @@ export function registerAuthRoutes(
       const sessionToken = randomBytes(32).toString("base64url");
       await dependencies.store.createSession(
         identity,
-        tokenHash(sessionToken),
+        hashSessionToken(sessionToken),
         expiresAt,
         currentTime,
       );
@@ -334,34 +299,8 @@ export function registerAuthRoutes(
     }
   });
 
-  app.get("/api/me", async (request, response) => {
-    const sessionToken = readCookie(request, SESSION_COOKIE_NAME);
-    if (!sessionToken) {
-      sendAuthenticationRequired(response);
-      return;
-    }
-
-    try {
-      const user = await dependencies.store.findActiveUser(
-        tokenHash(sessionToken),
-        now(),
-      );
-      if (!user) {
-        clearSessionCookie(response);
-        sendAuthenticationRequired(response);
-        return;
-      }
-
-      response.json({ user });
-    } catch {
-      response.status(503).json({
-        error: {
-          code: "provider_unavailable",
-          category: "retryable",
-          message: "Authentication is temporarily unavailable.",
-        },
-      });
-    }
+  app.get("/api/me", (request, response) => {
+    response.json({ user: authenticatedUser(request) });
   });
 
   app.post("/auth/logout", async (request, response) => {
@@ -379,7 +318,10 @@ export function registerAuthRoutes(
     const sessionToken = readCookie(request, SESSION_COOKIE_NAME);
     try {
       if (sessionToken) {
-        await dependencies.store.revokeSession(tokenHash(sessionToken), now());
+        await dependencies.store.revokeSession(
+          hashSessionToken(sessionToken),
+          now(),
+        );
       }
       clearSessionCookie(response);
       response.json({ signedOut: true });

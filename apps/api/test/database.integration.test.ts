@@ -7,6 +7,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PostgresAuthStore } from "../src/db/auth-store.js";
+import { PostgresInspectionRepository } from "../src/db/inspection-repository.js";
 import * as schema from "../src/db/schema.js";
 
 const migrationsFolder = fileURLToPath(new URL("../drizzle", import.meta.url));
@@ -222,5 +223,74 @@ describe("PostgreSQL migrations", () => {
       new Date(now.getTime() - 10_000),
     );
     await expect(store.findActiveUser(expiredHash, now)).resolves.toBeNull();
+  });
+
+  it("scopes inspection reads and writes to the current owner", async () => {
+    const [owner, otherOwner] = await sql<{ id: string }[]>`
+      insert into users (google_subject, email, display_name)
+      values
+        ('repository-owner', 'repository-owner@example.com', 'Repository Owner'),
+        ('repository-other', 'repository-other@example.com', 'Other Owner')
+      returning id
+    `;
+    const [inspection] = await sql<{ id: string }[]>`
+      insert into inspections (
+        owner_user_id,
+        title,
+        source_type,
+        workflow_key,
+        source_object_key
+      )
+      values (
+        ${owner!.id},
+        'Owner-only inspection',
+        'upload',
+        'factory-safety-v1',
+        'inspections/owner-only/source'
+      )
+      returning id
+    `;
+    const repository = new PostgresInspectionRepository(database);
+
+    await expect(
+      repository.findOwnedById(owner!.id, inspection!.id),
+    ).resolves.toMatchObject({
+      id: inspection!.id,
+      ownerUserId: owner!.id,
+      title: "Owner-only inspection",
+    });
+    await expect(
+      repository.findOwnedById(otherOwner!.id, inspection!.id),
+    ).resolves.toBeNull();
+    await expect(
+      repository.findOwnedById(otherOwner!.id, randomUUID()),
+    ).resolves.toBeNull();
+
+    await expect(
+      repository.updateOwnedById(otherOwner!.id, inspection!.id, {
+        title: "Cross-user mutation",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      repository.updateOwnedById(owner!.id, inspection!.id, {
+        title: "Owner update",
+      }),
+    ).resolves.toMatchObject({
+      id: inspection!.id,
+      ownerUserId: owner!.id,
+      title: "Owner update",
+    });
+
+    const [storedInspection] = await sql<
+      { owner_user_id: string; title: string }[]
+    >`
+      select owner_user_id, title
+      from inspections
+      where id = ${inspection!.id}
+    `;
+    expect(storedInspection).toEqual({
+      owner_user_id: owner!.id,
+      title: "Owner update",
+    });
   });
 });
