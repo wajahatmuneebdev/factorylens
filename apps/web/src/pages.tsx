@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { PageState } from "./components/PageState";
 import {
@@ -360,6 +360,25 @@ export function HistoryPage() {
 
 export function AccountPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const navigate = useNavigate();
+
+  async function signOut() {
+    setSignOutError(false);
+    setSigningOut(true);
+    try {
+      const response = await fetch("/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Sign-out failed");
+      }
+      navigate("/sign-in", { replace: true });
+    } catch {
+      setDialogOpen(false);
+      setSignOutError(true);
+      setSigningOut(false);
+    }
+  }
 
   return (
     <div className="page-stack page-stack--narrow">
@@ -378,14 +397,20 @@ export function AccountPage() {
       <section aria-labelledby="session-title" className="panel settings-row">
         <div>
           <h2 id="session-title">Session</h2>
-          <p>Authentication is not connected in this interface foundation.</p>
+          <p>Signing out revokes this FactoryLens session on the server.</p>
         </div>
         <Button onClick={() => setDialogOpen(true)} variant="danger">
-          Sign out preview
+          Sign out
         </Button>
       </section>
+      {signOutError ? (
+        <Notification onDismiss={() => setSignOutError(false)} tone="error">
+          <strong>FactoryLens could not sign you out.</strong>
+          <span>Your session is still active. Please try again.</span>
+        </Notification>
+      ) : null}
       <Dialog
-        description="This demonstrates the shared confirmation dialog. No session will be changed."
+        description="Your current FactoryLens session will be revoked."
         onClose={() => setDialogOpen(false)}
         open={dialogOpen}
         title="Leave FactoryLens?"
@@ -394,8 +419,8 @@ export function AccountPage() {
           <Button onClick={() => setDialogOpen(false)} variant="quiet">
             Stay signed in
           </Button>
-          <Button onClick={() => setDialogOpen(false)} variant="danger">
-            Sign out preview
+          <Button disabled={signingOut} onClick={signOut} variant="danger">
+            {signingOut ? "Signing out…" : "Sign out"}
           </Button>
         </div>
       </Dialog>
@@ -404,8 +429,6 @@ export function AccountPage() {
 }
 
 export function SignInPage() {
-  const [noticeVisible, setNoticeVisible] = useState(false);
-
   return (
     <main className="sign-in">
       <section aria-labelledby="sign-in-title" className="sign-in__card">
@@ -421,27 +444,19 @@ export function SignInPage() {
           Investigate recorded factory video through a focused, synchronized
           workspace.
         </p>
-        {noticeVisible ? (
-          <Notification
-            onDismiss={() => setNoticeVisible(false)}
-            tone="warning"
-          >
-            <strong>Sign-in is not connected yet.</strong>
-            <span>Explore the shell below while authentication is built.</span>
-          </Notification>
-        ) : null}
-        <Button className="button--full" onClick={() => setNoticeVisible(true)}>
+        <a
+          className="button button--primary button--full"
+          href="/auth/google?returnTo=/dashboard"
+        >
           <span aria-hidden="true" className="google-mark">
             G
           </span>
           Continue with Google
-        </Button>
+        </a>
         <p className="sign-in__note">
-          Sign-in is a visual preview and is not connected yet.
+          Google verifies your identity. FactoryLens manages your application
+          session.
         </p>
-        <Link className="text-link" to="/dashboard">
-          Explore the application shell
-        </Link>
       </section>
       <aside aria-label="Product preview" className="sign-in__visual">
         <div className="viewfinder">

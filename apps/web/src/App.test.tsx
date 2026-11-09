@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -20,7 +26,10 @@ beforeAll(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("application routes", () => {
   it.each([
@@ -49,16 +58,12 @@ describe("application routes", () => {
 });
 
 describe("application shell", () => {
-  it("keeps the sign-in preview honest while authentication is out of scope", () => {
+  it("starts Google sign-in through the same-origin auth endpoint", () => {
     renderRoute("/sign-in");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Continue with Google" }),
-    );
-
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Sign-in is not connected yet",
-    );
+    expect(
+      screen.getByRole("link", { name: "Continue with Google" }),
+    ).toHaveAttribute("href", "/auth/google?returnTo=/dashboard");
   });
 
   it("provides landmarks, keyboard entry, current navigation, and generic page states", () => {
@@ -122,12 +127,33 @@ describe("application shell", () => {
   it("opens and closes the shared confirmation dialog", () => {
     renderRoute("/account");
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign out preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(screen.getByRole("dialog")).toHaveAccessibleName(
       "Leave FactoryLens?",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("revokes the session before returning to sign-in", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    renderRoute("/account");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Sign out" }).at(-1)!,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/auth/logout", {
+        method: "POST",
+      });
+      expect(
+        screen.getByRole("heading", { name: "See every moment that matters." }),
+      ).toBeInTheDocument();
+    });
   });
 });

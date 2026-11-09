@@ -9,6 +9,10 @@ export default defineConfig(({ mode }) => {
     server: {
       host: environment.WEB_HOST ?? "127.0.0.1",
       port: Number(environment.WEB_PORT ?? 5173),
+      proxy: {
+        "/api": environment.WEB_API_TARGET ?? "http://127.0.0.1:3000",
+        "/auth": environment.WEB_API_TARGET ?? "http://127.0.0.1:3000",
+      },
     },
     test: {
       environment: "jsdom",
