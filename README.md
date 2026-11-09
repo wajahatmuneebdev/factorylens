@@ -23,8 +23,9 @@ Product planning, the first inspection contract, and architecture are complete.
 The repository now has a runnable service workspace, versioned application
 contracts, a PostgreSQL schema and migration, a responsive application shell,
 compatible local storage adapters, and an in-process development task
-dispatcher. Sign-in, uploads, processing, and result investigation are not
-connected yet.
+dispatcher. The Python worker also has a provider-neutral Workflow boundary and
+deterministic fixture inference for the prepared sample. Sign-in, uploads,
+processing orchestration, and result investigation are not connected yet.
 
 ## Development
 
@@ -49,9 +50,10 @@ time with `npm run dev:web`, `npm run dev:api`, or `npm run dev:worker`.
 
 No environment variable is required to start the local services. The
 credential-free `.env.example` file in each application documents optional host
-and port overrides. Export those variables in the shell before starting a
-service; Vite also reads `apps/web/.env` when present. The database variable
-described below is required only for its opt-in integration test.
+and port overrides, plus the worker's fixture Workflow endpoint. Export those
+variables in the shell before starting a service; Vite also reads
+`apps/web/.env` when present. The database variable described below is required
+only for its opt-in integration test.
 
 The root commands apply consistently across the npm and uv workspaces:
 
