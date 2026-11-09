@@ -3,7 +3,9 @@ name = "factorylens-worker"
 version = "0.0.0"
 description = "FactoryLens recorded-video processing worker"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.14.3",
+]
 
 [project.scripts]
 factorylens-worker = "factorylens_worker.server:main"
