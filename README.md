@@ -22,8 +22,9 @@ general-purpose computer-vision platform.
 Product planning, the first inspection contract, and architecture are complete.
 The repository now has a runnable service workspace, versioned application
 contracts, a PostgreSQL schema and migration, a responsive application shell,
-and compatible local storage adapters. Sign-in, uploads, processing, and result
-investigation are not connected yet.
+compatible local storage adapters, and an in-process development task
+dispatcher. Sign-in, uploads, processing, and result investigation are not
+connected yet.
 
 ## Development
 
