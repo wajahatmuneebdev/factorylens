@@ -24,9 +24,10 @@ The repository now has a runnable service workspace, versioned application
 contracts, a PostgreSQL schema and migration, a responsive application shell,
 compatible local storage adapters, and an in-process development task
 dispatcher. The Python worker also has a provider-neutral Workflow boundary and
-deterministic fixture inference for the prepared sample. Google sign-in and
-FactoryLens sessions are connected. Uploads, processing orchestration, and
-result investigation are not connected yet.
+deterministic fixture inference for the prepared sample. Google sign-in,
+FactoryLens sessions, and owner-scoped inspection access boundaries are
+connected. Inspection endpoints, uploads, processing orchestration, and result
+investigation are not connected yet.
 
 ## Development
 
