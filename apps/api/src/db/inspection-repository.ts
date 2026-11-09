@@ -1,10 +1,11 @@
-import { and, desc, eq, lt, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import * as schema from "./schema.js";
 
 export type InspectionRecord = typeof schema.inspections.$inferSelect;
 export type InspectionStatus = InspectionRecord["status"];
+export type JobRecord = typeof schema.jobs.$inferSelect;
 export type InspectionUpdate = Partial<
   Omit<
     typeof schema.inspections.$inferInsert,
@@ -23,6 +24,18 @@ export interface InspectionJobSummaryRecord {
 export interface InspectionViewRecord {
   inspection: InspectionRecord;
   job: InspectionJobSummaryRecord | null;
+}
+
+export interface UploadCompletionRecord {
+  inspection: InspectionRecord;
+  job: JobRecord | null;
+}
+
+export class InspectionStateConflictError extends Error {
+  constructor(readonly status: InspectionStatus) {
+    super(`Inspection cannot complete upload from status ${status}`);
+    this.name = "InspectionStateConflictError";
+  }
 }
 
 export interface InspectionListCursor {
@@ -66,7 +79,17 @@ export interface OwnerScopedInspectionRepository {
 }
 
 export interface InspectionApiRepository extends OwnerScopedInspectionRepository {
+  completeOwnedUpload(
+    ownerUserId: string,
+    inspectionId: string,
+    inspectedSizeBytes: number,
+    now: Date,
+  ): Promise<UploadCompletionRecord | null>;
   createOwned(input: CreateOwnedInspectionInput): Promise<InspectionRecord>;
+  findOwnedUploadCompletionById(
+    ownerUserId: string,
+    inspectionId: string,
+  ): Promise<UploadCompletionRecord | null>;
   findOwnedViewById(
     ownerUserId: string,
     inspectionId: string,
@@ -75,10 +98,93 @@ export interface InspectionApiRepository extends OwnerScopedInspectionRepository
     ownerUserId: string,
     options: ListOwnedInspectionsOptions,
   ): Promise<InspectionPage>;
+  markOwnedJobDispatched(
+    ownerUserId: string,
+    inspectionId: string,
+    jobId: string,
+    dispatchGeneration: number,
+    taskName: string,
+    now: Date,
+  ): Promise<UploadCompletionRecord | null>;
 }
 
 export class PostgresInspectionRepository implements InspectionApiRepository {
   constructor(private readonly database: PostgresJsDatabase<typeof schema>) {}
+
+  async completeOwnedUpload(
+    ownerUserId: string,
+    inspectionId: string,
+    inspectedSizeBytes: number,
+    now: Date,
+  ): Promise<UploadCompletionRecord | null> {
+    return this.database.transaction(async (transaction) => {
+      const [inspection] = await transaction
+        .select()
+        .from(schema.inspections)
+        .where(
+          and(
+            eq(schema.inspections.id, inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!inspection) {
+        return null;
+      }
+
+      const [existingJob] = await transaction
+        .select({ job: schema.jobs })
+        .from(schema.jobs)
+        .innerJoin(
+          schema.inspections,
+          and(
+            eq(schema.inspections.id, schema.jobs.inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .where(eq(schema.jobs.inspectionId, inspection.id))
+        .limit(1);
+
+      if (existingJob) {
+        return { inspection, job: existingJob.job };
+      }
+      if (inspection.status !== "awaiting_upload") {
+        throw new InspectionStateConflictError(inspection.status);
+      }
+
+      const [queuedInspection] = await transaction
+        .update(schema.inspections)
+        .set({
+          inspectedSizeBytes,
+          queuedAt: now,
+          status: "queued",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.inspections.id, inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+            eq(schema.inspections.status, "awaiting_upload"),
+          ),
+        )
+        .returning();
+      if (!queuedInspection) {
+        throw new InspectionStateConflictError(inspection.status);
+      }
+
+      const [job] = await transaction
+        .insert(schema.jobs)
+        .values({ inspectionId: queuedInspection.id })
+        .returning();
+      if (!job) {
+        throw new Error("Job insert returned no row");
+      }
+
+      return { inspection: queuedInspection, job };
+    });
+  }
 
   async createOwned(
     input: CreateOwnedInspectionInput,
@@ -110,6 +216,28 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
       .limit(1);
 
     return inspection ?? null;
+  }
+
+  async findOwnedUploadCompletionById(
+    ownerUserId: string,
+    inspectionId: string,
+  ): Promise<UploadCompletionRecord | null> {
+    const [record] = await this.database
+      .select({ inspection: schema.inspections, job: schema.jobs })
+      .from(schema.inspections)
+      .leftJoin(
+        schema.jobs,
+        eq(schema.jobs.inspectionId, schema.inspections.id),
+      )
+      .where(
+        and(
+          eq(schema.inspections.id, inspectionId),
+          eq(schema.inspections.ownerUserId, ownerUserId),
+        ),
+      )
+      .limit(1);
+
+    return record ?? null;
   }
 
   async updateOwnedById(
@@ -177,6 +305,94 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
       hasMore: records.length > options.limit,
       inspections: records.slice(0, options.limit),
     };
+  }
+
+  async markOwnedJobDispatched(
+    ownerUserId: string,
+    inspectionId: string,
+    jobId: string,
+    dispatchGeneration: number,
+    taskName: string,
+    now: Date,
+  ): Promise<UploadCompletionRecord | null> {
+    return this.database.transaction(async (transaction) => {
+      const [ownedJob] = await transaction
+        .select({ job: schema.jobs })
+        .from(schema.jobs)
+        .innerJoin(
+          schema.inspections,
+          and(
+            eq(schema.inspections.id, schema.jobs.inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .where(
+          and(
+            eq(schema.jobs.id, jobId),
+            eq(schema.jobs.inspectionId, inspectionId),
+            eq(schema.jobs.dispatchGeneration, dispatchGeneration),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!ownedJob) {
+        return null;
+      }
+
+      if (
+        ownedJob.job.status === "pending_dispatch" &&
+        ownedJob.job.taskEnqueuedAt === null
+      ) {
+        await transaction
+          .update(schema.jobs)
+          .set({
+            status: "queued",
+            taskEnqueuedAt: now,
+            taskName,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.jobs.id, jobId),
+              eq(schema.jobs.inspectionId, inspectionId),
+              eq(schema.jobs.dispatchGeneration, dispatchGeneration),
+              eq(schema.jobs.status, "pending_dispatch"),
+              isNull(schema.jobs.taskEnqueuedAt),
+              inArray(
+                schema.jobs.inspectionId,
+                transaction
+                  .select({ id: schema.inspections.id })
+                  .from(schema.inspections)
+                  .where(
+                    and(
+                      eq(schema.inspections.id, inspectionId),
+                      eq(schema.inspections.ownerUserId, ownerUserId),
+                    ),
+                  ),
+              ),
+            ),
+          );
+      }
+
+      const [record] = await transaction
+        .select({ inspection: schema.inspections, job: schema.jobs })
+        .from(schema.inspections)
+        .innerJoin(
+          schema.jobs,
+          eq(schema.jobs.inspectionId, schema.inspections.id),
+        )
+        .where(
+          and(
+            eq(schema.inspections.id, inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+            eq(schema.jobs.id, jobId),
+          ),
+        )
+        .limit(1);
+
+      return record ?? null;
+    });
   }
 
   private inspectionViewQuery() {

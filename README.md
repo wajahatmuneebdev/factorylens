@@ -26,8 +26,10 @@ compatible local storage adapters, and an in-process development task
 dispatcher. The Python worker also has a provider-neutral Workflow boundary and
 deterministic fixture inference for the prepared sample. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
-connected, as are inspection creation, history, and detail endpoints. Uploads,
-processing orchestration, and result investigation are not connected yet.
+connected, as are inspection creation, history, detail, verified upload
+completion, durable job creation, and post-commit task dispatch. Direct upload
+authorization, worker processing, and result investigation are not connected
+yet.
 
 ## Development
 
@@ -53,10 +55,10 @@ time with `npm run dev:web`, `npm run dev:api`, or `npm run dev:worker`.
 The API requires PostgreSQL, Google OIDC credentials, its public application
 origin, and a high-entropy auth cookie secret. The credential-free
 `.env.example` files document the required names and optional host and port
-overrides, plus the worker's fixture Workflow endpoint. Export those variables
-in the shell before starting a service; Vite also reads `apps/web/.env` when
-present. The test database variable described below is required only for its
-opt-in integration test.
+overrides, the API's local storage root, and the worker's fixture Workflow
+endpoint. Export those variables in the shell before starting a service; Vite
+also reads `apps/web/.env` when present. The test database variable described
+below is required only for its opt-in integration test.
 
 The root commands apply consistently across the npm and uv workspaces:
 
