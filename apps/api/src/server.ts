@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createApp } from "./app.js";
 import { PostgresAuthStore } from "./db/auth-store.js";
+import { PostgresInspectionRepository } from "./db/inspection-repository.js";
 import * as schema from "./db/schema.js";
 import { createGoogleOidcProvider } from "./google-oidc.js";
 
@@ -32,7 +33,8 @@ async function start(): Promise<void> {
   }
 
   const databaseClient = postgres(environment.DATABASE_URL);
-  const store = new PostgresAuthStore(drizzle(databaseClient, { schema }));
+  const database = drizzle(databaseClient, { schema });
+  const store = new PostgresAuthStore(database);
   let oidcProvider;
   try {
     oidcProvider = await createGoogleOidcProvider(
@@ -47,6 +49,7 @@ async function start(): Promise<void> {
     appOrigin,
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     oidcProvider,
+    inspections: new PostgresInspectionRepository(database),
     store,
     transactionSecret: environment.AUTH_COOKIE_SECRET,
   });

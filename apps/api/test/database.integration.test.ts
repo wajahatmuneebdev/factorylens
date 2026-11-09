@@ -293,4 +293,140 @@ describe("PostgreSQL migrations", () => {
       title: "Owner update",
     });
   });
+
+  it("creates and pages owner history in stable newest-first order", async () => {
+    const [owner, otherOwner, emptyOwner] = await sql<{ id: string }[]>`
+      insert into users (google_subject, email, display_name)
+      values
+        ('history-owner', 'history-owner@example.com', 'History Owner'),
+        ('history-other', 'history-other@example.com', 'History Other'),
+        ('history-empty', 'history-empty@example.com', 'History Empty')
+      returning id
+    `;
+    const repository = new PostgresInspectionRepository(database);
+    const created = await repository.createOwned({
+      id: "10000000-0000-4000-8000-000000000001",
+      ownerUserId: owner!.id,
+      title: "Created through repository",
+      sourceType: "recording",
+      workflowKey: "factory-safety-v1",
+      sourceObjectKey:
+        "inspections/10000000-0000-4000-8000-000000000001/source",
+      declaredFileName: "recording.webm",
+      declaredContentType: "video/webm",
+      declaredSizeBytes: 2048,
+    });
+    expect(created).toMatchObject({
+      ownerUserId: owner!.id,
+      status: "awaiting_upload",
+    });
+    await sql`
+      update inspections
+      set
+        created_at = '2026-11-09T07:59:59.000Z',
+        updated_at = '2026-11-09T07:59:59.000Z'
+      where id = ${created.id}
+    `;
+
+    const olderId = "20000000-0000-4000-8000-000000000001";
+    const tiedLowerId = "30000000-0000-4000-8000-000000000001";
+    const tiedHigherId = "40000000-0000-4000-8000-000000000001";
+    await sql`
+      insert into inspections (
+        id,
+        owner_user_id,
+        title,
+        source_type,
+        workflow_key,
+        source_object_key,
+        created_at,
+        updated_at
+      )
+      values
+        (
+          ${olderId},
+          ${owner!.id},
+          'Older',
+          'upload',
+          'factory-safety-v1',
+          ${`inspections/${olderId}/source`},
+          '2026-11-09T08:00:00.000Z',
+          '2026-11-09T08:00:00.000Z'
+        ),
+        (
+          ${tiedLowerId},
+          ${owner!.id},
+          'Tied lower',
+          'upload',
+          'factory-safety-v1',
+          ${`inspections/${tiedLowerId}/source`},
+          '2026-11-09T08:00:02.000Z',
+          '2026-11-09T08:00:02.000Z'
+        ),
+        (
+          ${tiedHigherId},
+          ${owner!.id},
+          'Tied higher',
+          'upload',
+          'factory-safety-v1',
+          ${`inspections/${tiedHigherId}/source`},
+          '2026-11-09T08:00:02.000Z',
+          '2026-11-09T08:00:02.000Z'
+        ),
+        (
+          ${randomUUID()},
+          ${otherOwner!.id},
+          'Other owner newest',
+          'upload',
+          'factory-safety-v1',
+          'inspections/other-owner/source',
+          '2026-11-09T08:00:03.000Z',
+          '2026-11-09T08:00:03.000Z'
+        )
+    `;
+    await sql`
+      insert into jobs (inspection_id, status, stage, progress_percent)
+      values (${tiedHigherId}, 'running', 'workflow', 45)
+    `;
+
+    await expect(
+      repository.listOwned(emptyOwner!.id, { limit: 20 }),
+    ).resolves.toEqual({ hasMore: false, inspections: [] });
+
+    const firstPage = await repository.listOwned(owner!.id, { limit: 2 });
+    expect(firstPage.hasMore).toBe(true);
+    expect(
+      firstPage.inspections.map(({ inspection }) => inspection.id),
+    ).toEqual([tiedHigherId, tiedLowerId]);
+    expect(firstPage.inspections[0]?.job).toMatchObject({
+      progressPercent: 45,
+      stage: "workflow",
+    });
+
+    const secondPage = await repository.listOwned(owner!.id, {
+      cursor: {
+        createdAt: firstPage.inspections[1]!.inspection.createdAt,
+        id: firstPage.inspections[1]!.inspection.id,
+      },
+      limit: 20,
+    });
+    expect(
+      secondPage.inspections.map(({ inspection }) => inspection.id),
+    ).toEqual([olderId, created.id]);
+    expect(
+      secondPage.inspections.every(
+        ({ inspection }) => inspection.ownerUserId === owner!.id,
+      ),
+    ).toBe(true);
+
+    await expect(
+      repository.findOwnedViewById(otherOwner!.id, tiedHigherId),
+    ).resolves.toBeNull();
+    await expect(
+      repository.findOwnedViewById(owner!.id, tiedHigherId),
+    ).resolves.toMatchObject({
+      inspection: { id: tiedHigherId, ownerUserId: owner!.id },
+      job: { progressPercent: 45, stage: "workflow" },
+    });
+  });
 });

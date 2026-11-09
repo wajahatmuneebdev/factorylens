@@ -102,9 +102,13 @@ export const MeResponseSchema = z.object({ user: UserSchema }).strict();
 const directUploadSource = z
   .object({
     sourceType: z.enum(["upload", "recording"]),
-    fileName: z.string().min(1).max(255),
-    contentType: z.string().min(1).max(120),
-    sizeBytes: z.number().int().positive(),
+    fileName: z.string().trim().min(1).max(255),
+    contentType: z.string().trim().startsWith("video/").max(120),
+    sizeBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(250 * 1024 * 1024),
   })
   .strict();
 
@@ -117,7 +121,8 @@ const sampleSource = z
 
 export const CreateInspectionRequestSchema = z
   .object({
-    title: z.string().min(1).max(160),
+    title: z.string().trim().min(1).max(160),
+    workflowKey: z.literal("factory-safety-v1"),
     source: z.union([directUploadSource, sampleSource]),
   })
   .strict();
