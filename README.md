@@ -20,8 +20,10 @@ general-purpose computer-vision platform.
 ## Project status
 
 Product planning, the first inspection contract, and architecture are complete.
-The repository includes the initial React, Node API, shared TypeScript contract,
-and Python worker scaffolding. Product features have not been implemented yet.
+The repository now has a runnable service workspace, versioned application
+contracts, a PostgreSQL schema and migration, a responsive application shell,
+and compatible local storage adapters. Sign-in, uploads, processing, and result
+investigation are not connected yet.
 
 ## Development
 
@@ -35,31 +37,37 @@ npm ci
 uv sync --project apps/worker --locked
 ```
 
-Start every placeholder service together with `npm run dev`, or start one at a
+Start every local service together with `npm run dev`, or start one at a
 time with `npm run dev:web`, `npm run dev:api`, or `npm run dev:worker`.
 
-| Component | Default address | Health behavior |
-| --- | --- | --- |
-| React app | `http://127.0.0.1:5173` | Renders `Health: ok` |
-| Express API | `http://127.0.0.1:3000/health` | Returns a JSON health response |
+| Component     | Default address                | Current behavior               |
+| ------------- | ------------------------------ | ------------------------------ |
+| React app     | `http://127.0.0.1:5173`        | Renders the application shell  |
+| Express API   | `http://127.0.0.1:3000/health` | Returns a JSON health response |
 | Python worker | `http://127.0.0.1:8000/health` | Returns a JSON health response |
 
-No environment variable is required for the placeholder services. The
-credential-free `.env.example` file in each application documents the optional
-host and port overrides. Export those variables in the shell before starting a
-service; Vite also reads `apps/web/.env` when present.
+No environment variable is required to start the local services. The
+credential-free `.env.example` file in each application documents optional host
+and port overrides. Export those variables in the shell before starting a
+service; Vite also reads `apps/web/.env` when present. The database variable
+described below is required only for its opt-in integration test.
 
 The root commands apply consistently across the npm and uv workspaces:
 
-| Command | Purpose |
-| --- | --- |
-| `npm run build` | Build the TypeScript packages and applications |
-| `npm run typecheck` | Type-check TypeScript and Python |
-| `npm run lint` | Lint TypeScript, Markdown, and Python |
-| `npm run format` | Format TypeScript, JSON, and Python |
-| `npm run format:check` | Check formatting without changing files |
-| `npm test` | Run the TypeScript and Python placeholder tests |
-| `npm run check` | Run every clean-checkout verification command |
+| Command                | Purpose                                            |
+| ---------------------- | -------------------------------------------------- |
+| `npm run build`        | Build the TypeScript packages and applications     |
+| `npm run typecheck`    | Type-check TypeScript and Python                   |
+| `npm run lint`         | Lint TypeScript, Markdown, and Python              |
+| `npm run format`       | Format TypeScript, JSON, and Python                |
+| `npm run format:check` | Check formatting without changing files            |
+| `npm test`             | Run the standard TypeScript and Python tests       |
+| `npm run check`        | Run the standard clean-checkout verification suite |
+
+The PostgreSQL migration integration test is separate because it requires an
+empty disposable database. Set `TEST_DATABASE_URL` and run
+`npm run test:integration --workspace @factorylens/api` for database schema or
+migration changes.
 
 ## Documentation
 

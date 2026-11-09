@@ -208,26 +208,16 @@ export function NewInspectionPage() {
           <Field label="Source type">
             <select defaultValue="upload" name="sourceType">
               <option value="upload">Upload a video</option>
-              <option value="record">Record in browser</option>
+              <option value="recording">Record in browser</option>
               <option value="sample">Use prepared sample</option>
             </select>
           </Field>
           <Field label="Workflow">
-            <select defaultValue="safety" name="workflow">
-              <option value="safety">Factory safety review</option>
+            <select defaultValue="factory-safety-v1" name="workflow">
+              <option value="factory-safety-v1">Factory safety review</option>
             </select>
           </Field>
         </div>
-        <Field
-          hint="Optional context is kept with this inspection."
-          label="Notes"
-        >
-          <textarea
-            name="notes"
-            placeholder="Add shift, line, or camera context"
-            rows={4}
-          />
-        </Field>
         <div className="form-actions">
           <Link className="button button--quiet" to="/dashboard">
             Cancel

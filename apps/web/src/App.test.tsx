@@ -93,6 +93,19 @@ describe("application shell", () => {
   it("demonstrates form and notification primitives without creating data", () => {
     renderRoute("/inspections/new");
 
+    expect(screen.getByRole("combobox", { name: "Source type" })).toHaveValue(
+      "upload",
+    );
+    expect(
+      screen.getByRole("option", { name: "Record in browser" }),
+    ).toHaveValue("recording");
+    expect(screen.getByRole("combobox", { name: "Workflow" })).toHaveValue(
+      "factory-safety-v1",
+    );
+    expect(
+      screen.queryByRole("textbox", { name: "Notes" }),
+    ).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByRole("textbox", { name: "Inspection name" }), {
       target: { value: "Line review" },
     });
