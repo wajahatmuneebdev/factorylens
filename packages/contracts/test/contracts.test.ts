@@ -58,6 +58,7 @@ describe("browser API contracts", () => {
     expect(
       CreateInspectionRequestSchema.parse({
         title: "Shift 2 review",
+        workflowKey: "factory-safety-v1",
         source: {
           sourceType: "upload",
           fileName: "line.webm",
@@ -69,12 +70,44 @@ describe("browser API contracts", () => {
     expect(
       CreateInspectionRequestSchema.parse({
         title: "Prepared sample",
+        workflowKey: "factory-safety-v1",
         source: {
           sourceType: "sample",
           sampleKey: "assembly-line-no-hard-hat",
         },
       }),
     ).toBeDefined();
+  });
+
+  it("rejects unknown Workflows and invalid declared media metadata", () => {
+    const request = {
+      title: "Shift 2 review",
+      workflowKey: "unknown-workflow",
+      source: {
+        sourceType: "upload",
+        fileName: "line.webm",
+        contentType: "video/webm",
+        sizeBytes: 4096,
+      },
+    };
+
+    expect(CreateInspectionRequestSchema.safeParse(request).success).toBe(
+      false,
+    );
+    expect(
+      CreateInspectionRequestSchema.safeParse({
+        ...request,
+        workflowKey: "factory-safety-v1",
+        source: { ...request.source, contentType: "text/plain" },
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateInspectionRequestSchema.safeParse({
+        ...request,
+        workflowKey: "factory-safety-v1",
+        source: { ...request.source, sizeBytes: 250 * 1024 * 1024 + 1 },
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects redirect targets that browsers can normalize off-origin", () => {

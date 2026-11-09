@@ -26,8 +26,8 @@ compatible local storage adapters, and an in-process development task
 dispatcher. The Python worker also has a provider-neutral Workflow boundary and
 deterministic fixture inference for the prepared sample. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
-connected. Inspection endpoints, uploads, processing orchestration, and result
-investigation are not connected yet.
+connected, as are inspection creation, history, and detail endpoints. Uploads,
+processing orchestration, and result investigation are not connected yet.
 
 ## Development
 
