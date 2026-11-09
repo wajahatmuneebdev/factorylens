@@ -1,0 +1,177 @@
+import { readFileSync } from "node:fs";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  AuthRedirectResponseSchema,
+  BrowserApiSchemas,
+  CreateInspectionRequestSchema,
+  ERROR_DEFINITIONS,
+  ErrorCategorySchema,
+  GoogleAuthRequestSchema,
+  JOB_TRANSITIONS,
+  ProcessTaskMessageSchema,
+  PredictionArtifactV1Schema,
+  SafeErrorSchema,
+  canTransitionInspection,
+  canTransitionJob,
+} from "../src/index";
+
+const fixturesUrl = new URL("../../../fixtures/contracts/", import.meta.url);
+
+function readFixture(name: string): unknown {
+  return JSON.parse(readFileSync(new URL(name, fixturesUrl), "utf8"));
+}
+
+describe("browser API contracts", () => {
+  it("defines request and response schemas for the initial browser surface", () => {
+    expect(Object.keys(BrowserApiSchemas)).toEqual([
+      "GET /auth/google",
+      "GET /auth/google/callback",
+      "POST /auth/logout",
+      "GET /api/me",
+      "POST /api/inspections",
+      "POST /api/inspections/:id/upload-complete",
+      "GET /api/inspections",
+      "GET /api/inspections/:id",
+      "POST /api/inspections/:id/cancel",
+      "POST /api/inspections/:id/retry",
+      "GET /api/inspections/:id/artifacts",
+      "GET /api/inspections/:id/export.csv",
+    ]);
+
+    for (const contract of Object.values(BrowserApiSchemas)) {
+      expect(contract.request).toBeDefined();
+      expect(contract.response).toBeDefined();
+    }
+  });
+
+  it("accepts direct uploads and the one prepared sample", () => {
+    expect(
+      CreateInspectionRequestSchema.parse({
+        title: "Shift 2 review",
+        source: {
+          sourceType: "upload",
+          fileName: "line.webm",
+          contentType: "video/webm",
+          sizeBytes: 4096,
+        },
+      }),
+    ).toBeDefined();
+    expect(
+      CreateInspectionRequestSchema.parse({
+        title: "Prepared sample",
+        source: {
+          sourceType: "sample",
+          sampleKey: "assembly-line-no-hard-hat",
+        },
+      }),
+    ).toBeDefined();
+  });
+
+  it("rejects redirect targets that browsers can normalize off-origin", () => {
+    expect(
+      GoogleAuthRequestSchema.safeParse({ returnTo: "/history" }).success,
+    ).toBe(true);
+    expect(
+      GoogleAuthRequestSchema.safeParse({ returnTo: "/\\evil.example" })
+        .success,
+    ).toBe(false);
+    expect(
+      AuthRedirectResponseSchema.safeParse({ location: "/" }).success,
+    ).toBe(true);
+    expect(
+      AuthRedirectResponseSchema.safeParse({ location: "javascript:alert(1)" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("lifecycle contracts", () => {
+  it("allows only explicit inspection and job transitions", () => {
+    expect(canTransitionInspection("awaiting_upload", "queued")).toBe(true);
+    expect(canTransitionInspection("failed", "queued")).toBe(true);
+    expect(canTransitionInspection("completed", "processing")).toBe(false);
+    expect(canTransitionJob("running", "retry_wait")).toBe(true);
+    expect(canTransitionJob("retry_wait", "cancelled")).toBe(true);
+    expect(canTransitionJob("completed", "running")).toBe(false);
+    expect(JOB_TRANSITIONS.completed).toEqual([]);
+  });
+});
+
+describe("safe errors", () => {
+  it("assigns every stable error code to a supported category", () => {
+    for (const category of Object.values(ERROR_DEFINITIONS)) {
+      expect(ErrorCategorySchema.parse(category)).toBe(category);
+    }
+  });
+
+  it("rejects a code paired with the wrong category", () => {
+    expect(
+      SafeErrorSchema.safeParse({
+        code: "access_denied",
+        category: "terminal",
+        message: "You cannot view this inspection.",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("worker-facing fixtures", () => {
+  it("validates the task message and permits only its two fields", () => {
+    const fixture = ProcessTaskMessageSchema.parse(
+      readFixture("process-task-message.json"),
+    );
+
+    expect(fixture.dispatchGeneration).toBe(2);
+    expect(
+      ProcessTaskMessageSchema.safeParse({
+        ...fixture,
+        inspectionId: fixture.jobId,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates prediction artifact schema version 1", () => {
+    const fixture = PredictionArtifactV1Schema.parse(
+      readFixture("prediction-artifact-v1.json"),
+    );
+
+    expect(fixture.schemaVersion).toBe(1);
+    expect(fixture.source).toMatchObject({
+      durationMs: 1000,
+      timeBase: "milliseconds",
+      sampleRateFps: 5,
+    });
+  });
+
+  it("rejects non-monotonic frame timestamps", () => {
+    const fixture = readFixture("prediction-artifact-v1.json") as {
+      frames: { timestampMs: number }[];
+    };
+    fixture.frames[1]!.timestampMs = 0;
+
+    expect(PredictionArtifactV1Schema.safeParse(fixture).success).toBe(false);
+  });
+
+  it("allows qualifying frames that do not confirm an event", () => {
+    const fixture = readFixture("prediction-artifact-v1.json") as {
+      frames: { predictions: unknown[] }[];
+      events: unknown[];
+      summary: {
+        missingHardHatEventCount: number;
+        qualifyingFrameCount: number;
+        peakConfidence: number | null;
+      };
+    };
+    fixture.frames[2]!.predictions = [];
+    fixture.events = [];
+    fixture.summary = {
+      missingHardHatEventCount: 0,
+      qualifyingFrameCount: 2,
+      peakConfidence: 0.93,
+    };
+
+    expect(PredictionArtifactV1Schema.safeParse(fixture).success).toBe(true);
+  });
+});

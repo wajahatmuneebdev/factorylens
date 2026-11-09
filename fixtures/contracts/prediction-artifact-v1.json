@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "inspectionId": "018f4f72-3d3a-7c1c-b10b-f2a7c849e830",
+  "source": {
+    "width": 1280,
+    "height": 720,
+    "durationMs": 1000,
+    "timeBase": "milliseconds",
+    "sampleRateFps": 5
+  },
+  "workflow": {
+    "key": "factory-safety-v1",
+    "workflowId": "hard-hat-compliance-v1",
+    "workflowVersion": "1",
+    "modelId": "construction-site-safety/27",
+    "fingerprint": "sha256:4ad6c4f907778e721d638444ad0b6881bd1af563c5530c85e0a8ef376f7f0a61"
+  },
+  "classes": ["Person", "Hardhat", "NO-Hardhat"],
+  "frames": [
+    {
+      "timestampMs": 0,
+      "predictions": [
+        {
+          "id": "f000000-p000",
+          "className": "NO-Hardhat",
+          "confidence": 0.91,
+          "box": { "x": 614, "y": 238, "width": 92, "height": 108 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 200,
+      "predictions": [
+        {
+          "id": "f000001-p000",
+          "className": "NO-Hardhat",
+          "confidence": 0.93,
+          "box": { "x": 618, "y": 239, "width": 94, "height": 110 }
+        }
+      ]
+    },
+    {
+      "timestampMs": 400,
+      "predictions": [
+        {
+          "id": "f000002-p000",
+          "className": "NO-Hardhat",
+          "confidence": 0.9,
+          "box": { "x": 621, "y": 240, "width": 94, "height": 110 }
+        }
+      ]
+    },
+    { "timestampMs": 600, "predictions": [] },
+    { "timestampMs": 800, "predictions": [] }
+  ],
+  "events": [
+    {
+      "id": "event-000",
+      "type": "missing_hard_hat",
+      "label": "Missing hard hat",
+      "startMs": 0,
+      "endMs": 1000,
+      "peakConfidence": 0.93,
+      "qualifyingFrameCount": 3
+    }
+  ],
+  "summary": {
+    "missingHardHatEventCount": 1,
+    "qualifyingFrameCount": 3,
+    "peakConfidence": 0.93
+  }
+}
