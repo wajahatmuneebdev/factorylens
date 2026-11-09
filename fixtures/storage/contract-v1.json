@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "inspectionId": "018f8f5e-7b9a-7c21-8a43-6b2c91e5d104",
+  "generation": 2,
+  "keys": {
+    "source": "inspections/018f8f5e-7b9a-7c21-8a43-6b2c91e5d104/source",
+    "normalized": "inspections/018f8f5e-7b9a-7c21-8a43-6b2c91e5d104/generations/2/normalized",
+    "thumbnail": "inspections/018f8f5e-7b9a-7c21-8a43-6b2c91e5d104/generations/2/thumbnail",
+    "prediction": "inspections/018f8f5e-7b9a-7c21-8a43-6b2c91e5d104/generations/2/prediction"
+  },
+  "objects": {
+    "source": "source-video-bytes",
+    "normalized": "normalized-video-bytes",
+    "thumbnail": "thumbnail-bytes",
+    "prediction": "compressed-prediction-bytes"
+  },
+  "replacement": "replacement-source-video-bytes",
+  "missingKey": "inspections/00000000-0000-0000-0000-000000000000/source",
+  "invalidKeys": [
+    "../outside",
+    "inspections/../../outside",
+    "/absolute/outside",
+    "inspections\\outside"
+  ]
+}
