@@ -3,6 +3,11 @@ import postgres from "postgres";
 import { z } from "zod";
 
 import { createApp } from "./app.js";
+import {
+  cloudTasksConfigurationFromEnvironment,
+  taskDispatcherModeFromEnvironment,
+} from "./cloud-tasks-config.js";
+import { CloudTaskDispatcher } from "./cloud-task-dispatcher.js";
 import { PostgresAuthStore } from "./db/auth-store.js";
 import { PostgresInspectionRepository } from "./db/inspection-repository.js";
 import * as schema from "./db/schema.js";
@@ -37,6 +42,11 @@ async function start(): Promise<void> {
   ) {
     throw new Error("APP_ORIGIN must be an HTTPS origin");
   }
+  const taskDispatcherMode = taskDispatcherModeFromEnvironment(process.env);
+  const cloudTasksConfiguration =
+    taskDispatcherMode === "cloud-tasks"
+      ? cloudTasksConfigurationFromEnvironment(process.env)
+      : undefined;
 
   const databaseClient = postgres(environment.DATABASE_URL);
   const database = drizzle(databaseClient, { schema });
@@ -57,6 +67,12 @@ async function start(): Promise<void> {
     endpoint: `https://${environment.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     secretAccessKey: environment.R2_SECRET_ACCESS_KEY,
   });
+  const taskDispatcher =
+    cloudTasksConfiguration !== undefined
+      ? new CloudTaskDispatcher(cloudTasksConfiguration.dispatcher)
+      : new LocalTaskDispatcher({
+          invokeWorker: () => undefined,
+        });
   const app = createApp({
     appOrigin,
     callbackUrl: new URL("/auth/google/callback", appOrigin),
@@ -65,9 +81,7 @@ async function start(): Promise<void> {
     objectAccess: storage,
     storage,
     store,
-    taskDispatcher: new LocalTaskDispatcher({
-      invokeWorker: () => undefined,
-    }),
+    taskDispatcher,
     transactionSecret: environment.AUTH_COOKIE_SECRET,
   });
 

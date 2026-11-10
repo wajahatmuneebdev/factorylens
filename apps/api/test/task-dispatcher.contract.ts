@@ -92,5 +92,18 @@ export function taskDispatcherContract(
       await harness.waitForDelivery();
       expect(harness.deliveredMessages).toEqual([message]);
     });
+
+    it("rejects fields outside the worker task contract", async () => {
+      const harness = await createHarness();
+      const invalidMessage = {
+        ...message,
+        inspectionId: "f29c7b8c-d2ce-4a37-93bd-2d34ea89bb25",
+      } as ProcessTaskMessage;
+
+      await expect(
+        harness.dispatcher.dispatch(invalidMessage),
+      ).rejects.toThrow();
+      expect(harness.deliveredMessages).toEqual([]);
+    });
   });
 }

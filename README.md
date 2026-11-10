@@ -23,8 +23,10 @@ Product planning, the first inspection contract, and architecture are complete.
 The repository now has a runnable service workspace, versioned application
 contracts, a PostgreSQL schema and migration, a responsive application shell,
 compatible local storage adapters, and an in-process development task
-dispatcher. The Python worker also has a provider-neutral Workflow boundary and
-deterministic fixture inference for the prepared sample. Google sign-in,
+dispatcher. A production Cloud Tasks adapter now provides durable,
+rate-controlled, OIDC-authenticated worker dispatch. The Python worker also has
+a provider-neutral Workflow boundary and deterministic fixture inference for
+the prepared sample. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
@@ -61,7 +63,11 @@ fixture Workflow endpoint. Export those variables in the shell before starting
 a service; Vite also reads `apps/web/.env` when present. Run
 `npm run configure:r2 --workspace @factorylens/api` with the API environment to
 restrict browser access to the configured application origin. The test database
-variable described below is required only for its opt-in integration test.
+variable described below is required only for its opt-in integration test. Set
+`TASK_DISPATCHER=cloud-tasks` in production and run
+`npm run configure:tasks --workspace @factorylens/api` with deployment
+credentials to apply the configured rate, concurrency, and retry limits to an
+already-provisioned queue.
 
 The root commands apply consistently across the npm and uv workspaces:
 
