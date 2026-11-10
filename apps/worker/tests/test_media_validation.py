@@ -245,6 +245,8 @@ def test_incompatible_media_is_normalized_reprobed_and_stored_by_generation(
     assert isinstance(source_streams[1], dict)
     source_format["format_name"] = "avi"
     source_streams[0]["codec_name"] = "mpeg4"
+    source_streams[0]["width"] = 1280
+    source_streams[0]["height"] = 720
     source_streams[1]["codec_name"] = "mp3"
     runner = FixtureProbeRunner([source_probe, valid_probe()])
     stage, _, converter, store, storage, temporary_directory = configured_stage(
@@ -261,7 +263,8 @@ def test_incompatible_media_is_normalized_reprobed_and_stored_by_generation(
         lease_token=lease_token,
     )
 
-    assert metadata.container == "avi"
+    assert metadata.container == "matroska,webm"
+    assert (metadata.width, metadata.height) == (1840, 1080)
     assert len(converter.calls) == 1
     assert converter.calls[0][2:] == (
         12.0,
