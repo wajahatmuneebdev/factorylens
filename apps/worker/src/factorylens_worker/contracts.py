@@ -13,6 +13,7 @@ class ContractModel(BaseModel):
 
 
 PositiveInt = Annotated[int, Field(gt=0)]
+SafePositiveInt = Annotated[int, Field(gt=0, le=2**53 - 1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 Confidence = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 PositiveNumber = Annotated[float, Field(gt=0, allow_inf_nan=False)]
@@ -21,7 +22,7 @@ NonNegativeNumber = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 class ProcessTaskMessage(ContractModel):
     jobId: UUID
-    dispatchGeneration: PositiveInt
+    dispatchGeneration: SafePositiveInt
 
 
 class PredictionBox(ContractModel):

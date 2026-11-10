@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "FactoryLens recorded-video processing worker"
 requires-python = ">=3.12"
 dependencies = [
+    "psycopg[binary]>=3.2,<4",
     "pydantic>=2.14.3",
 ]
 
@@ -26,6 +27,9 @@ strict = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
+markers = [
+  "integration: requires a migrated disposable PostgreSQL database",
+]
 testpaths = ["tests"]
 
 [tool.ruff]

@@ -25,8 +25,9 @@ contracts, a PostgreSQL schema and migration, a responsive application shell,
 compatible local storage adapters, and an in-process development task
 dispatcher. A production Cloud Tasks adapter now provides durable,
 rate-controlled, OIDC-authenticated worker dispatch. The Python worker also has
-a provider-neutral Workflow boundary and deterministic fixture inference for
-the prepared sample. Google sign-in,
+a validated internal task endpoint, atomic PostgreSQL job leases, a
+provider-neutral Workflow boundary, and deterministic fixture inference for the
+prepared sample. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
@@ -49,18 +50,19 @@ uv sync --project apps/worker --locked
 Start every local service together with `npm run dev`, or start one at a
 time with `npm run dev:web`, `npm run dev:api`, or `npm run dev:worker`.
 
-| Component     | Default address                | Current behavior               |
-| ------------- | ------------------------------ | ------------------------------ |
-| React app     | `http://127.0.0.1:5173`        | Renders the application shell  |
-| Express API   | `http://127.0.0.1:3000/health` | Returns a JSON health response |
-| Python worker | `http://127.0.0.1:8000/health` | Returns a JSON health response |
+| Component     | Default address                | Current behavior                 |
+| ------------- | ------------------------------ | -------------------------------- |
+| React app     | `http://127.0.0.1:5173`        | Renders the application shell    |
+| Express API   | `http://127.0.0.1:3000/health` | Returns a JSON health response   |
+| Python worker | `http://127.0.0.1:8000/health` | Health and internal task leasing |
 
-The API requires PostgreSQL, Google OIDC credentials, private R2 bucket
-credentials scoped to that bucket, its public application origin, and a
-high-entropy auth cookie secret. The credential-free `.env.example` files
-document the required names, optional host and port overrides, and the worker's
-fixture Workflow endpoint. Export those variables in the shell before starting
-a service; Vite also reads `apps/web/.env` when present. Run
+The API and worker require PostgreSQL. The API also requires Google OIDC
+credentials, private R2 bucket credentials scoped to that bucket, its public
+application origin, and a high-entropy auth cookie secret. The credential-free
+`.env.example` files document the required names, optional host and port
+overrides, and the worker's fixture Workflow endpoint. Export those variables
+in the shell before starting a service; Vite also reads `apps/web/.env` when
+present. Run
 `npm run configure:r2 --workspace @factorylens/api` with the API environment to
 restrict browser access to the configured application origin. The test database
 variable described below is required only for its opt-in integration test. Set

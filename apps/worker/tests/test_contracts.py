@@ -26,6 +26,10 @@ def test_task_fixture_validates_and_rejects_extra_payload() -> None:
         ProcessTaskMessage.model_validate_json(
             json.dumps({**payload, "inspectionId": str(task.jobId)})
         )
+    with pytest.raises(ValidationError):
+        ProcessTaskMessage.model_validate_json(
+            json.dumps({**payload, "dispatchGeneration": 2**53})
+        )
 
 
 def test_prediction_fixture_validates() -> None:
