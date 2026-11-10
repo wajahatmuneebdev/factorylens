@@ -26,10 +26,11 @@ compatible local storage adapters, and an in-process development task
 dispatcher. A production Cloud Tasks adapter now provides durable,
 rate-controlled, OIDC-authenticated worker dispatch. The Python worker also has
 a validated internal task endpoint, atomic PostgreSQL job leases, a
-provider-neutral Workflow boundary, and deterministic fixture inference for the
-prepared sample. Its bounded media-validation stage now inspects source bytes
-with ffprobe, passes compatible media through, and uses bounded FFmpeg
-normalization only for incompatible input. Google sign-in,
+provider-neutral Workflow boundary, deterministic fixture inference for the
+prepared sample, and a production Roboflow Workflow adapter for Cloud or a
+compatible self-hosted Inference endpoint. Its bounded media-validation stage
+now inspects source bytes with ffprobe, passes compatible media through, and
+uses bounded FFmpeg normalization only for incompatible input. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
@@ -62,9 +63,13 @@ The API and worker require PostgreSQL. The API also requires Google OIDC
 credentials, private R2 bucket credentials scoped to that bucket, its public
 application origin, and a high-entropy auth cookie secret. The credential-free
 `.env.example` files document the required names, optional host and port
-overrides, and the worker's fixture Workflow endpoint. Export those variables
-in the shell before starting a service; Vite also reads `apps/web/.env` when
-present. Run
+overrides, the worker's fixture Workflow endpoint, and the opt-in Roboflow
+adapter settings. Export those variables in the shell before starting a
+service; Vite also reads `apps/web/.env` when present. The standard test suite
+uses fixture inference. Set `RUN_ROBOFLOW_INTEGRATION=1` with the documented
+worker Workflow settings and run
+`uv run --project apps/worker pytest -m roboflow_integration` to exercise the
+selected deployed Workflow. Run
 `npm run configure:r2 --workspace @factorylens/api` with the API environment to
 restrict browser access to the configured application origin. The test database
 variable described below is required only for its opt-in integration test. Set

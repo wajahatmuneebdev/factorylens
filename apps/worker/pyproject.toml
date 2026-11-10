@@ -29,6 +29,7 @@ strict = true
 addopts = "--strict-config --strict-markers"
 markers = [
   "integration: requires a migrated disposable PostgreSQL database",
+  "roboflow_integration: opt-in call to the configured Roboflow Workflow",
 ]
 testpaths = ["tests"]
 
