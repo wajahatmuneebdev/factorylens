@@ -5,6 +5,7 @@ import {
   CreateInspectionRequestSchema,
   ERROR_DEFINITIONS,
   ErrorCodeSchema,
+  GetArtifactsRequestSchema,
   InspectionPathParamsSchema,
   InspectionSchema,
   ListInspectionsQuerySchema,
@@ -23,6 +24,7 @@ import { z } from "zod";
 import type {
   InspectionApiRepository,
   InspectionListCursor,
+  InspectionRecord,
   InspectionViewRecord,
   UploadCompletionRecord,
 } from "./db/inspection-repository.js";
@@ -32,6 +34,7 @@ import {
 } from "./db/inspection-repository.js";
 import { authenticatedUser } from "./session.js";
 import {
+  type ObjectAccessAuthorizer,
   type ObjectStorage,
   sourceObjectKey,
   StorageObjectNotFoundError,
@@ -48,6 +51,7 @@ const cursorPayloadSchema = z
 export interface InspectionRouteDependencies {
   appOrigin: URL;
   now?: () => Date;
+  objectAccess: ObjectAccessAuthorizer;
   repository: InspectionApiRepository;
   storage: ObjectStorage;
   taskDispatcher: TaskDispatcher;
@@ -209,8 +213,9 @@ export function registerInspectionRoutes(
     const id = randomUUID();
     const directSource =
       parsed.data.source.sourceType === "sample" ? null : parsed.data.source;
+    let inspection: InspectionRecord;
     try {
-      const inspection = await dependencies.repository.createOwned({
+      inspection = await dependencies.repository.createOwned({
         declaredContentType: directSource?.contentType ?? null,
         declaredFileName: directSource?.fileName ?? null,
         declaredSizeBytes: directSource?.sizeBytes ?? null,
@@ -221,16 +226,33 @@ export function registerInspectionRoutes(
         title: parsed.data.title,
         workflowKey: parsed.data.workflowKey,
       });
-
-      response.status(201).json({
-        inspection: inspectionResponse({ inspection, job: null }),
-        upload: null,
-      });
     } catch {
       sendSafeError(response, 503, {
         code: "provider_unavailable",
         category: "retryable",
         message: "Inspection creation is temporarily unavailable.",
+      });
+      return;
+    }
+
+    try {
+      const upload = directSource
+        ? await dependencies.objectAccess.authorizeUpload(
+            inspection.sourceObjectKey,
+            directSource.contentType,
+          )
+        : null;
+      response.status(201).json({
+        inspection: inspectionResponse({ inspection, job: null }),
+        upload: upload
+          ? { ...upload, expiresAt: upload.expiresAt.toISOString() }
+          : null,
+      });
+    } catch {
+      sendSafeError(response, 503, {
+        code: "storage_unavailable",
+        category: "retryable",
+        message: "Upload authorization is temporarily unavailable.",
       });
     }
   });
@@ -465,6 +487,84 @@ export function registerInspectionRoutes(
         code: "provider_unavailable",
         category: "retryable",
         message: "Inspection access is temporarily unavailable.",
+      });
+    }
+  });
+
+  app.get("/api/inspections/:id/artifacts", async (request, response) => {
+    const path = GetArtifactsRequestSchema.safeParse(request.params);
+    if (!path.success) {
+      sendInvalidRequest(response, "The inspection identifier is invalid.");
+      return;
+    }
+
+    let record: InspectionViewRecord | null;
+    try {
+      record = await dependencies.repository.findOwnedViewById(
+        authenticatedUser(request).id,
+        path.data.id,
+      );
+    } catch {
+      sendSafeError(response, 503, {
+        code: "provider_unavailable",
+        category: "retryable",
+        message: "Inspection artifacts are temporarily unavailable.",
+      });
+      return;
+    }
+
+    if (!record) {
+      sendSafeError(response, 404, {
+        code: "inspection_not_found",
+        category: "terminal",
+        message: "Inspection not found.",
+      });
+      return;
+    }
+
+    const { inspection } = record;
+    if (inspection.status !== "completed") {
+      sendSafeError(response, 409, {
+        code: "inspection_state_conflict",
+        category: "terminal",
+        message: "Artifacts are available only for completed inspections.",
+      });
+      return;
+    }
+    if (
+      !inspection.predictionObjectKey ||
+      inspection.predictionSchemaVersion !== 1
+    ) {
+      sendSafeError(response, 503, {
+        code: "storage_unavailable",
+        category: "retryable",
+        message: "Inspection artifacts are temporarily unavailable.",
+      });
+      return;
+    }
+
+    try {
+      const [video, predictions] = await Promise.all([
+        dependencies.objectAccess.authorizeDownload(
+          inspection.normalizedObjectKey ?? inspection.sourceObjectKey,
+        ),
+        dependencies.objectAccess.authorizeDownload(
+          inspection.predictionObjectKey,
+        ),
+      ]);
+      response.json({
+        video: { ...video, expiresAt: video.expiresAt.toISOString() },
+        predictions: {
+          ...predictions,
+          expiresAt: predictions.expiresAt.toISOString(),
+        },
+        predictionSchemaVersion: 1,
+      });
+    } catch {
+      sendSafeError(response, 503, {
+        code: "storage_unavailable",
+        category: "retryable",
+        message: "Inspection artifacts are temporarily unavailable.",
       });
     }
   });

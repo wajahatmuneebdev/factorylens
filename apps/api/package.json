@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "configure:r2": "tsx src/configure-r2.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
@@ -13,6 +14,8 @@
     "test:integration": "vitest run test/database.integration.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1165.0",
+    "@aws-sdk/s3-request-presigner": "^3.1165.0",
     "@factorylens/contracts": "^0.0.0",
     "drizzle-orm": "^0.45.4",
     "express": "^5.3.0",

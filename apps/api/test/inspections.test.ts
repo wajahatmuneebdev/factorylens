@@ -17,6 +17,7 @@ import type {
 import { InspectionCommandConflictError } from "../src/db/inspection-repository.js";
 import { hashSessionToken } from "../src/session.js";
 import {
+  type ObjectAccessAuthorizer,
   type ObjectStorage,
   type StorageObjectMetadata,
   StorageObjectNotFoundError,
@@ -291,7 +292,19 @@ class FakeInspectionRepository implements InspectionApiRepository {
   );
 }
 
-class FakeStorage implements ObjectStorage {
+class FakeStorage implements ObjectStorage, ObjectAccessAuthorizer {
+  readonly authorizeDownload = vi.fn(async (key: string) => ({
+    url: `https://storage.example/${key}?signature=download`,
+    expiresAt: new Date(currentTime.getTime() + 10 * 60 * 1000),
+  }));
+  readonly authorizeUpload = vi.fn(
+    async (key: string, contentType: string) => ({
+      method: "PUT" as const,
+      url: `https://storage.example/${key}?signature=upload`,
+      headers: { "Content-Type": contentType },
+      expiresAt: new Date(currentTime.getTime() + 10 * 60 * 1000),
+    }),
+  );
   readonly delete = vi.fn(async () => undefined);
   readonly exists = vi.fn(async () => false);
   readonly metadata = vi.fn(
@@ -317,7 +330,7 @@ const oidcProvider: OidcProvider = {
 
 function inspectionApp(
   repository: FakeInspectionRepository,
-  storage: ObjectStorage = new FakeStorage(),
+  storage: ObjectStorage & ObjectAccessAuthorizer = new FakeStorage(),
   taskDispatcher: TaskDispatcher = new FakeTaskDispatcher(),
 ) {
   return createApp({
@@ -325,6 +338,7 @@ function inspectionApp(
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     inspections: repository,
     now: () => currentTime,
+    objectAccess: storage,
     oidcProvider,
     storage,
     store: new FakeAuthStore(),
@@ -366,7 +380,11 @@ describe("inspection API", () => {
         workflowKey: "factory-safety-v1",
         progress: { stage: null, percent: 0 },
       },
-      upload: null,
+      upload: {
+        method: "PUT",
+        headers: { "Content-Type": "video/webm" },
+        expiresAt: "2026-11-09T08:10:00.000Z",
+      },
     });
     expect(repository.createOwned).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -380,6 +398,31 @@ describe("inspection API", () => {
     );
     const created = repository.createOwned.mock.calls[0]![0];
     expect(created.sourceObjectKey).toBe(`inspections/${created.id}/source`);
+    expect(response.body.upload.url).toContain(
+      `/inspections/${created.id}/source?signature=upload`,
+    );
+  });
+
+  it("does not issue upload authorization for the prepared sample", async () => {
+    const repository = new FakeInspectionRepository();
+    const storage = new FakeStorage();
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage))
+        .post("/api/inspections")
+        .set("Origin", appOrigin.origin),
+    ).send({
+      title: "Prepared sample",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "sample",
+        sampleKey: "assembly-line-no-hard-hat",
+      },
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.upload).toBeNull();
+    expect(storage.authorizeUpload).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -527,6 +570,83 @@ describe("inspection API", () => {
       owner.id,
       secondInspectionId,
     );
+  });
+
+  it("authorizes object-specific downloads only for an owned completed inspection", async () => {
+    const repository = new FakeInspectionRepository();
+    const normalizedKey = `inspections/${firstInspectionId}/generations/2/normalized`;
+    const predictionKey = `inspections/${firstInspectionId}/generations/2/prediction`;
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          completedAt: currentTime,
+          normalizedObjectKey: normalizedKey,
+          predictionObjectKey: predictionKey,
+          predictionSchemaVersion: 1,
+          status: "completed",
+        },
+        job: null,
+      },
+      {
+        inspection: {
+          ...inspectionRecord(secondInspectionId, otherOwnerId),
+          completedAt: currentTime,
+          predictionObjectKey: `inspections/${secondInspectionId}/generations/1/prediction`,
+          predictionSchemaVersion: 1,
+          status: "completed",
+        },
+        job: null,
+      },
+    ];
+    const storage = new FakeStorage();
+    const app = inspectionApp(repository, storage);
+
+    const allowed = await authenticated(
+      request(app).get(`/api/inspections/${firstInspectionId}/artifacts`),
+    );
+    const hidden = await authenticated(
+      request(app).get(`/api/inspections/${secondInspectionId}/artifacts`),
+    );
+
+    expect(allowed.status).toBe(200);
+    expect(allowed.body).toMatchObject({
+      video: { expiresAt: "2026-11-09T08:10:00.000Z" },
+      predictions: { expiresAt: "2026-11-09T08:10:00.000Z" },
+      predictionSchemaVersion: 1,
+    });
+    expect(storage.authorizeDownload.mock.calls.map(([key]) => key)).toEqual([
+      normalizedKey,
+      predictionKey,
+    ]);
+    expect(hidden.status).toBe(404);
+    expect(storage.authorizeDownload).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not authorize artifacts before inspection completion", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          predictionObjectKey: `inspections/${firstInspectionId}/generations/1/prediction`,
+          predictionSchemaVersion: 1,
+          status: "processing",
+        },
+        job: null,
+      },
+    ];
+    const storage = new FakeStorage();
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage)).get(
+        `/api/inspections/${firstInspectionId}/artifacts`,
+      ),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("inspection_state_conflict");
+    expect(storage.authorizeDownload).not.toHaveBeenCalled();
   });
 
   it("rejects missing uploads and declared-size mismatches before creating a job", async () => {

@@ -28,8 +28,9 @@ deterministic fixture inference for the prepared sample. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
-authorization, worker processing, and result investigation are not connected
-yet. Owner-scoped cancellation and retry commands are also connected.
+authorization and private artifact access are connected. Worker processing and
+the result-investigation interface are not connected yet. Owner-scoped
+cancellation and retry commands are also connected.
 
 ## Development
 
@@ -52,13 +53,15 @@ time with `npm run dev:web`, `npm run dev:api`, or `npm run dev:worker`.
 | Express API   | `http://127.0.0.1:3000/health` | Returns a JSON health response |
 | Python worker | `http://127.0.0.1:8000/health` | Returns a JSON health response |
 
-The API requires PostgreSQL, Google OIDC credentials, its public application
-origin, and a high-entropy auth cookie secret. The credential-free
-`.env.example` files document the required names and optional host and port
-overrides, the API's local storage root, and the worker's fixture Workflow
-endpoint. Export those variables in the shell before starting a service; Vite
-also reads `apps/web/.env` when present. The test database variable described
-below is required only for its opt-in integration test.
+The API requires PostgreSQL, Google OIDC credentials, private R2 bucket
+credentials scoped to that bucket, its public application origin, and a
+high-entropy auth cookie secret. The credential-free `.env.example` files
+document the required names, optional host and port overrides, and the worker's
+fixture Workflow endpoint. Export those variables in the shell before starting
+a service; Vite also reads `apps/web/.env` when present. Run
+`npm run configure:r2 --workspace @factorylens/api` with the API environment to
+restrict browser access to the configured application origin. The test database
+variable described below is required only for its opt-in integration test.
 
 The root commands apply consistently across the npm and uv workspaces:
 
