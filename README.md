@@ -30,12 +30,14 @@ provider-neutral Workflow boundary, deterministic fixture inference for the
 prepared sample, and a production Roboflow Workflow adapter for Cloud or a
 compatible self-hosted Inference endpoint. Its bounded media-validation stage
 now inspects source bytes with ffprobe, passes compatible media through, and
-uses bounded FFmpeg normalization only for incompatible input. Google sign-in,
+uses bounded FFmpeg normalization only for incompatible input. The worker can
+also build deterministic gzip prediction artifacts and atomically commit their
+small summaries under the current job lease. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
 authorization and private artifact access are connected. Worker processing and
-the result-investigation interface are not connected yet. Owner-scoped
+the result-investigation interface are not fully orchestrated yet. Owner-scoped
 cancellation and retry commands are also connected.
 
 ## Development

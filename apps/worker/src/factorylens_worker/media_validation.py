@@ -416,6 +416,8 @@ class MediaValidationStage:
                         self._storage.put(normalized_key, normalized)
                     self._raise_if_cancelled(is_cancelled)
 
+                    metadata = normalized_metadata
+
             if not self._metadata_store.record(
                 job_id, lease_token, metadata, normalized_key
             ):

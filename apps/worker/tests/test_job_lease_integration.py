@@ -14,6 +14,11 @@ from factorylens_worker.media_validation import (
     MediaStreamMetadata,
 )
 from factorylens_worker.media_validation_store import PostgresMediaMetadataStore
+from factorylens_worker.prediction_artifact import InspectionCompletion
+from factorylens_worker.prediction_artifact_store import (
+    PostgresInspectionCompletionStore,
+)
+from factorylens_worker.storage import processing_object_keys
 
 database_url = os.environ.get("TEST_DATABASE_URL")
 pytestmark = [
@@ -251,3 +256,187 @@ def test_terminal_job_is_acknowledged_even_for_an_old_generation(
 
     assert decision.outcome is LeaseOutcome.TERMINAL
     assert decision.lease is None
+
+
+def completion_for(inspection_id: UUID, generation: int = 1) -> InspectionCompletion:
+    return InspectionCompletion(
+        prediction_object_key=processing_object_keys(
+            inspection_id, generation
+        ).prediction,
+        prediction_schema_version=1,
+        workflow_key="factory-safety-v1",
+        workflow_fingerprint=(
+            "sha256:6f17fa35c215660fe398df8bd98157759817bfa859be8065ae1c19312ef07d62"
+        ),
+        missing_hard_hat_event_count=1,
+        qualifying_frame_count=10,
+        peak_confidence=0.95,
+    )
+
+
+def test_completion_atomically_commits_the_job_and_small_inspection_summary(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    lease = (
+        PostgresJobLeaseStore(database_url)
+        .acquire(ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1))
+        .lease
+    )
+    assert lease is not None
+    artifact_written = False
+
+    def write_artifact() -> None:
+        nonlocal artifact_written
+        artifact_written = True
+
+    accepted = PostgresInspectionCompletionStore(database_url).complete_with_artifact(
+        job_id=queued_job,
+        inspection_id=lease.inspection_id,
+        dispatch_generation=1,
+        lease_token=lease.token,
+        completion=completion_for(lease.inspection_id),
+        write_artifact=write_artifact,
+    )
+
+    assert accepted
+    assert artifact_written
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select
+                job.status,
+                job.stage,
+                job.progress_percent,
+                job.lease_token,
+                job.finished_at is not null,
+                inspection.status,
+                inspection.prediction_object_key,
+                inspection.prediction_schema_version,
+                inspection.workflow_fingerprint,
+                inspection.missing_hard_hat_event_count,
+                inspection.qualifying_frame_count,
+                inspection.peak_confidence,
+                inspection.completed_at is not null
+            from jobs as job
+            join inspections as inspection on inspection.id = job.inspection_id
+            where job.id = %s
+            """,
+            (queued_job,),
+        ).fetchone()
+
+    assert row == (
+        "completed",
+        "completed",
+        100,
+        None,
+        True,
+        "completed",
+        completion_for(lease.inspection_id).prediction_object_key,
+        1,
+        completion_for(lease.inspection_id).workflow_fingerprint,
+        1,
+        10,
+        0.95,
+        True,
+    )
+
+
+def test_stale_lease_cannot_write_over_a_newer_attempt_or_committed_result(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    lease_store = PostgresJobLeaseStore(database_url)
+    first = lease_store.acquire(
+        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    ).lease
+    assert first is not None
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "update jobs set lease_expires_at = now() - interval '1 second' "
+            "where id = %s",
+            (queued_job,),
+        )
+    second = lease_store.acquire(
+        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    ).lease
+    assert second is not None
+    store = PostgresInspectionCompletionStore(database_url)
+    writes: list[str] = []
+    completion = completion_for(second.inspection_id)
+
+    assert not store.complete_with_artifact(
+        job_id=queued_job,
+        inspection_id=first.inspection_id,
+        dispatch_generation=1,
+        lease_token=first.token,
+        completion=completion,
+        write_artifact=lambda: writes.append("stale-before"),
+    )
+    assert store.complete_with_artifact(
+        job_id=queued_job,
+        inspection_id=second.inspection_id,
+        dispatch_generation=1,
+        lease_token=second.token,
+        completion=completion,
+        write_artifact=lambda: writes.append("current"),
+    )
+    assert not store.complete_with_artifact(
+        job_id=queued_job,
+        inspection_id=first.inspection_id,
+        dispatch_generation=1,
+        lease_token=first.token,
+        completion=completion,
+        write_artifact=lambda: writes.append("stale-after"),
+    )
+    assert writes == ["current"]
+
+
+def test_database_failure_after_artifact_write_rolls_back_both_states(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    lease = (
+        PostgresJobLeaseStore(database_url)
+        .acquire(ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1))
+        .lease
+    )
+    assert lease is not None
+    completion = completion_for(lease.inspection_id)
+    invalid_completion = InspectionCompletion(
+        prediction_object_key="x" * 1025,
+        prediction_schema_version=completion.prediction_schema_version,
+        workflow_key=completion.workflow_key,
+        workflow_fingerprint=completion.workflow_fingerprint,
+        missing_hard_hat_event_count=completion.missing_hard_hat_event_count,
+        qualifying_frame_count=completion.qualifying_frame_count,
+        peak_confidence=completion.peak_confidence,
+    )
+    artifact_written = False
+
+    def write_artifact() -> None:
+        nonlocal artifact_written
+        artifact_written = True
+
+    with pytest.raises(psycopg.errors.StringDataRightTruncation):
+        PostgresInspectionCompletionStore(database_url).complete_with_artifact(
+            job_id=queued_job,
+            inspection_id=lease.inspection_id,
+            dispatch_generation=1,
+            lease_token=lease.token,
+            completion=invalid_completion,
+            write_artifact=write_artifact,
+        )
+
+    assert artifact_written
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select job.status, inspection.status, inspection.prediction_object_key
+            from jobs as job
+            join inspections as inspection on inspection.id = job.inspection_id
+            where job.id = %s
+            """,
+            (queued_job,),
+        ).fetchone()
+    assert row == ("running", "processing", None)
