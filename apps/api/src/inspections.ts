@@ -7,6 +7,7 @@ import {
   InspectionPathParamsSchema,
   InspectionSchema,
   ListInspectionsQuerySchema,
+  UploadCompleteRequestSchema,
   type Inspection,
   type SafeError,
 } from "@factorylens/contracts";
@@ -21,9 +22,16 @@ import type {
   InspectionApiRepository,
   InspectionListCursor,
   InspectionViewRecord,
+  UploadCompletionRecord,
 } from "./db/inspection-repository.js";
+import { InspectionStateConflictError } from "./db/inspection-repository.js";
 import { authenticatedUser } from "./session.js";
-import { sourceObjectKey } from "./storage.js";
+import {
+  type ObjectStorage,
+  sourceObjectKey,
+  StorageObjectNotFoundError,
+} from "./storage.js";
+import type { TaskDispatcher } from "./task-dispatcher.js";
 
 const cursorPayloadSchema = z
   .object({
@@ -34,7 +42,10 @@ const cursorPayloadSchema = z
 
 export interface InspectionRouteDependencies {
   appOrigin: URL;
+  now?: () => Date;
   repository: InspectionApiRepository;
+  storage: ObjectStorage;
+  taskDispatcher: TaskDispatcher;
 }
 
 function sendSafeError(
@@ -123,10 +134,22 @@ function encodeCursor(record: InspectionViewRecord): string {
   ).toString("base64url");
 }
 
+function uploadCompleteResponse(record: UploadCompletionRecord) {
+  if (!record.job) {
+    throw new Error("Completed upload has no durable job");
+  }
+
+  return {
+    inspection: inspectionResponse(record),
+    job: { id: record.job.id, status: record.job.status },
+  };
+}
+
 export function registerInspectionRoutes(
   app: Express,
   dependencies: InspectionRouteDependencies,
 ): void {
+  const now = dependencies.now ?? (() => new Date());
   app.use("/api/inspections", express.json({ limit: "16kb" }));
 
   app.post("/api/inspections", async (request, response) => {
@@ -213,6 +236,178 @@ export function registerInspectionRoutes(
       });
     }
   });
+
+  app.post(
+    "/api/inspections/:id/upload-complete",
+    async (request, response) => {
+      if (request.get("origin") !== dependencies.appOrigin.origin) {
+        sendSafeError(response, 403, {
+          code: "access_denied",
+          category: "authorization",
+          message: "The inspection request origin is not allowed.",
+        });
+        return;
+      }
+
+      const path = InspectionPathParamsSchema.safeParse(request.params);
+      const body = UploadCompleteRequestSchema.safeParse(request.body);
+      if (!path.success || !body.success) {
+        sendInvalidRequest(
+          response,
+          "The upload completion request is invalid.",
+        );
+        return;
+      }
+
+      const ownerUserId = authenticatedUser(request).id;
+      let completion: UploadCompletionRecord | null;
+      try {
+        completion =
+          await dependencies.repository.findOwnedUploadCompletionById(
+            ownerUserId,
+            path.data.id,
+          );
+      } catch {
+        sendSafeError(response, 503, {
+          code: "provider_unavailable",
+          category: "retryable",
+          message: "Upload completion is temporarily unavailable.",
+        });
+        return;
+      }
+
+      if (!completion) {
+        sendSafeError(response, 404, {
+          code: "inspection_not_found",
+          category: "terminal",
+          message: "Inspection not found.",
+        });
+        return;
+      }
+
+      if (!completion.job) {
+        if (
+          completion.inspection.status !== "awaiting_upload" ||
+          completion.inspection.declaredSizeBytes === null ||
+          completion.inspection.sourceType === "sample"
+        ) {
+          sendSafeError(response, 409, {
+            code: "inspection_state_conflict",
+            category: "terminal",
+            message: "This inspection cannot complete an upload.",
+          });
+          return;
+        }
+
+        let sizeBytes: number;
+        try {
+          const metadata = await dependencies.storage.metadata(
+            completion.inspection.sourceObjectKey,
+          );
+          sizeBytes = metadata.sizeBytes;
+        } catch (error) {
+          if (error instanceof StorageObjectNotFoundError) {
+            sendSafeError(response, 400, {
+              code: "invalid_media",
+              category: "terminal",
+              message: "The uploaded video was not found.",
+            });
+          } else {
+            sendSafeError(response, 503, {
+              code: "storage_unavailable",
+              category: "retryable",
+              message:
+                "Uploaded video verification is temporarily unavailable.",
+            });
+          }
+          return;
+        }
+
+        if (sizeBytes !== completion.inspection.declaredSizeBytes) {
+          sendSafeError(response, 400, {
+            code: "invalid_media",
+            category: "terminal",
+            message:
+              "The uploaded video size does not match the declared size.",
+          });
+          return;
+        }
+
+        try {
+          completion = await dependencies.repository.completeOwnedUpload(
+            ownerUserId,
+            path.data.id,
+            sizeBytes,
+            now(),
+          );
+        } catch (error) {
+          if (error instanceof InspectionStateConflictError) {
+            sendSafeError(response, 409, {
+              code: "inspection_state_conflict",
+              category: "terminal",
+              message: "This inspection cannot complete an upload.",
+            });
+          } else {
+            sendSafeError(response, 503, {
+              code: "provider_unavailable",
+              category: "retryable",
+              message: "Upload completion is temporarily unavailable.",
+            });
+          }
+          return;
+        }
+
+        if (!completion) {
+          sendSafeError(response, 404, {
+            code: "inspection_not_found",
+            category: "terminal",
+            message: "Inspection not found.",
+          });
+          return;
+        }
+      }
+
+      const job = completion.job;
+      if (!job) {
+        sendSafeError(response, 503, {
+          code: "provider_unavailable",
+          category: "retryable",
+          message: "Upload completion is temporarily unavailable.",
+        });
+        return;
+      }
+
+      if (job.status === "pending_dispatch" && job.taskEnqueuedAt === null) {
+        try {
+          const dispatched = await dependencies.taskDispatcher.dispatch({
+            dispatchGeneration: job.dispatchGeneration,
+            jobId: job.id,
+          });
+          const marked = await dependencies.repository.markOwnedJobDispatched(
+            ownerUserId,
+            path.data.id,
+            job.id,
+            job.dispatchGeneration,
+            dispatched.taskName,
+            now(),
+          );
+          if (!marked?.job) {
+            throw new Error("Dispatched job could not be recorded");
+          }
+          completion = marked;
+        } catch {
+          sendSafeError(response, 503, {
+            code: "provider_unavailable",
+            category: "retryable",
+            message: "Processing dispatch is temporarily unavailable.",
+          });
+          return;
+        }
+      }
+
+      response.json(uploadCompleteResponse(completion));
+    },
+  );
 
   app.get("/api/inspections/:id", async (request, response) => {
     const path = InspectionPathParamsSchema.safeParse(request.params);

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { SafeErrorSchema } from "./errors.js";
-import { InspectionStateSchema } from "./lifecycle.js";
+import { InspectionStateSchema, JobStateSchema } from "./lifecycle.js";
 
 const timestamp = z.iso.datetime({ offset: true });
 const emptyRequest = z.object({}).strict();
@@ -149,7 +149,15 @@ export const UploadCompleteRequestSchema = z
   .object({ etag: z.string().min(1).max(128).optional() })
   .strict();
 export const UploadCompleteResponseSchema = z
-  .object({ inspection: InspectionSchema })
+  .object({
+    inspection: InspectionSchema,
+    job: z
+      .object({
+        id: z.uuid(),
+        status: JobStateSchema,
+      })
+      .strict(),
+  })
   .strict();
 
 export const ListInspectionsQuerySchema = z

@@ -7,6 +7,8 @@ import { PostgresAuthStore } from "./db/auth-store.js";
 import { PostgresInspectionRepository } from "./db/inspection-repository.js";
 import * as schema from "./db/schema.js";
 import { createGoogleOidcProvider } from "./google-oidc.js";
+import { LocalFilesystemStorage } from "./storage.js";
+import { LocalTaskDispatcher } from "./task-dispatcher.js";
 
 const environmentSchema = z.object({
   API_HOST: z.string().min(1).default("127.0.0.1"),
@@ -16,6 +18,7 @@ const environmentSchema = z.object({
   DATABASE_URL: z.string().startsWith("postgresql://"),
   GOOGLE_OIDC_CLIENT_ID: z.string().min(1),
   GOOGLE_OIDC_CLIENT_SECRET: z.string().min(1),
+  LOCAL_STORAGE_ROOT: z.string().min(1).default(".factorylens/storage"),
 });
 
 async function start(): Promise<void> {
@@ -50,7 +53,11 @@ async function start(): Promise<void> {
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     oidcProvider,
     inspections: new PostgresInspectionRepository(database),
+    storage: new LocalFilesystemStorage(environment.LOCAL_STORAGE_ROOT),
     store,
+    taskDispatcher: new LocalTaskDispatcher({
+      invokeWorker: () => undefined,
+    }),
     transactionSecret: environment.AUTH_COOKIE_SECRET,
   });
 

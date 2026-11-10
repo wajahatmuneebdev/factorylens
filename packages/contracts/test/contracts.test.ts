@@ -13,6 +13,7 @@ import {
   ProcessTaskMessageSchema,
   PredictionArtifactV1Schema,
   SafeErrorSchema,
+  UploadCompleteResponseSchema,
   canTransitionInspection,
   canTransitionJob,
 } from "../src/index";
@@ -108,6 +109,36 @@ describe("browser API contracts", () => {
         source: { ...request.source, sizeBytes: 250 * 1024 * 1024 + 1 },
       }).success,
     ).toBe(false);
+  });
+
+  it("returns the durable job identity from upload completion", () => {
+    const timestamp = "2026-11-09T08:00:00.000Z";
+    const response = UploadCompleteResponseSchema.parse({
+      inspection: {
+        id: "323e4567-e89b-42d3-a456-426614174000",
+        title: "Assembly line review",
+        status: "queued",
+        sourceType: "upload",
+        workflowKey: "factory-safety-v1",
+        progress: { stage: null, percent: 0 },
+        summary: null,
+        error: null,
+        createdAt: timestamp,
+        queuedAt: timestamp,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: timestamp,
+      },
+      job: {
+        id: "523e4567-e89b-42d3-a456-426614174000",
+        status: "queued",
+      },
+    });
+
+    expect(response.job).toEqual({
+      id: "523e4567-e89b-42d3-a456-426614174000",
+      status: "queued",
+    });
   });
 
   it("rejects redirect targets that browsers can normalize off-origin", () => {

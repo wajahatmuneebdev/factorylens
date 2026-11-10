@@ -28,3 +28,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local FactoryLens runtime data
+.factorylens/

@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+
 import type { User } from "@factorylens/contracts";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
@@ -9,8 +11,19 @@ import type {
   InspectionApiRepository,
   InspectionRecord,
   InspectionViewRecord,
+  JobRecord,
+  UploadCompletionRecord,
 } from "../src/db/inspection-repository.js";
 import { hashSessionToken } from "../src/session.js";
+import {
+  type ObjectStorage,
+  type StorageObjectMetadata,
+  StorageObjectNotFoundError,
+} from "../src/storage.js";
+import {
+  deterministicTaskName,
+  type TaskDispatcher,
+} from "../src/task-dispatcher.js";
 
 const appOrigin = new URL("https://factorylens.example");
 const currentTime = new Date("2026-11-09T08:00:00.000Z");
@@ -62,6 +75,32 @@ function inspectionRecord(
   };
 }
 
+function jobRecord(id = "523e4567-e89b-42d3-a456-426614174000"): JobRecord {
+  return {
+    id,
+    inspectionId: firstInspectionId,
+    status: "pending_dispatch",
+    stage: null,
+    progressPercent: 0,
+    attemptCount: 0,
+    maxAttempts: 3,
+    dispatchGeneration: 1,
+    taskName: null,
+    taskEnqueuedAt: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    heartbeatAt: null,
+    cancelRequestedAt: null,
+    errorCode: null,
+    errorMessage: null,
+    createdAt: currentTime,
+    availableAt: currentTime,
+    startedAt: null,
+    finishedAt: null,
+    updatedAt: currentTime,
+  };
+}
+
 class FakeAuthStore implements AuthStore {
   readonly createSession = vi.fn();
   readonly revokeSession = vi.fn();
@@ -73,6 +112,38 @@ class FakeAuthStore implements AuthStore {
 
 class FakeInspectionRepository implements InspectionApiRepository {
   records: InspectionViewRecord[] = [];
+  uploads: UploadCompletionRecord[] = [];
+
+  readonly completeOwnedUpload = vi.fn(
+    async (
+      ownerUserId: string,
+      inspectionId: string,
+      inspectedSizeBytes: number,
+      now: Date,
+    ): Promise<UploadCompletionRecord | null> => {
+      const record = this.uploads.find(
+        ({ inspection }) =>
+          inspection.ownerUserId === ownerUserId &&
+          inspection.id === inspectionId,
+      );
+      if (!record) {
+        return null;
+      }
+      if (record.job) {
+        return record;
+      }
+
+      record.inspection = {
+        ...record.inspection,
+        inspectedSizeBytes,
+        queuedAt: now,
+        status: "queued",
+        updatedAt: now,
+      };
+      record.job = { ...jobRecord(), inspectionId };
+      return record;
+    },
+  );
 
   readonly createOwned = vi.fn(
     async (input: CreateOwnedInspectionInput): Promise<InspectionRecord> => ({
@@ -99,6 +170,18 @@ class FakeInspectionRepository implements InspectionApiRepository {
       )?.inspection ?? null,
   );
 
+  readonly findOwnedUploadCompletionById = vi.fn(
+    async (
+      ownerUserId: string,
+      inspectionId: string,
+    ): Promise<UploadCompletionRecord | null> =>
+      this.uploads.find(
+        ({ inspection }) =>
+          inspection.ownerUserId === ownerUserId &&
+          inspection.id === inspectionId,
+      ) ?? null,
+  );
+
   readonly findOwnedViewById = vi.fn(
     async (
       ownerUserId: string,
@@ -121,6 +204,55 @@ class FakeInspectionRepository implements InspectionApiRepository {
   readonly updateOwnedById = vi.fn(
     async (): Promise<InspectionRecord | null> => null,
   );
+
+  readonly markOwnedJobDispatched = vi.fn(
+    async (
+      ownerUserId: string,
+      inspectionId: string,
+      jobId: string,
+      dispatchGeneration: number,
+      taskName: string,
+      now: Date,
+    ): Promise<UploadCompletionRecord | null> => {
+      const record = this.uploads.find(
+        ({ inspection, job }) =>
+          inspection.ownerUserId === ownerUserId &&
+          inspection.id === inspectionId &&
+          job?.id === jobId &&
+          job.dispatchGeneration === dispatchGeneration,
+      );
+      if (!record?.job) {
+        return null;
+      }
+      record.job = {
+        ...record.job,
+        status: "queued",
+        taskName,
+        taskEnqueuedAt: now,
+        updatedAt: now,
+      };
+      return record;
+    },
+  );
+}
+
+class FakeStorage implements ObjectStorage {
+  readonly delete = vi.fn(async () => undefined);
+  readonly exists = vi.fn(async () => false);
+  readonly metadata = vi.fn(
+    async (key: string): Promise<StorageObjectMetadata> => {
+      throw new StorageObjectNotFoundError(key);
+    },
+  );
+  readonly put = vi.fn(async (key: string) => ({ key, sizeBytes: 0 }));
+  readonly read = vi.fn(async () => Readable.from([]));
+}
+
+class FakeTaskDispatcher implements TaskDispatcher {
+  readonly dispatch = vi.fn(async (message) => ({
+    outcome: "dispatched" as const,
+    taskName: deterministicTaskName(message),
+  }));
 }
 
 const oidcProvider: OidcProvider = {
@@ -128,14 +260,20 @@ const oidcProvider: OidcProvider = {
   exchangeAuthorizationCode: vi.fn(),
 };
 
-function inspectionApp(repository: FakeInspectionRepository) {
+function inspectionApp(
+  repository: FakeInspectionRepository,
+  storage: ObjectStorage = new FakeStorage(),
+  taskDispatcher: TaskDispatcher = new FakeTaskDispatcher(),
+) {
   return createApp({
     appOrigin,
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     inspections: repository,
     now: () => currentTime,
     oidcProvider,
+    storage,
     store: new FakeAuthStore(),
+    taskDispatcher,
     transactionSecret: "a-secure-test-secret-that-is-long-enough",
   });
 }
@@ -334,6 +472,198 @@ describe("inspection API", () => {
       owner.id,
       secondInspectionId,
     );
+  });
+
+  it("rejects missing uploads and declared-size mismatches before creating a job", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.uploads = [
+      { inspection: inspectionRecord(firstInspectionId), job: null },
+      { inspection: inspectionRecord(secondInspectionId), job: null },
+    ];
+    const storage = new FakeStorage();
+    storage.metadata.mockImplementation(async (key) => {
+      if (key.includes(firstInspectionId)) {
+        throw new StorageObjectNotFoundError(key);
+      }
+      return { key, sizeBytes: 4095 };
+    });
+    const dispatcher = new FakeTaskDispatcher();
+    const app = inspectionApp(repository, storage, dispatcher);
+
+    const missing = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+    const mismatch = await authenticated(
+      request(app)
+        .post(`/api/inspections/${secondInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.code).toBe("invalid_media");
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.error.code).toBe("invalid_media");
+    expect(repository.completeOwnedUpload).not.toHaveBeenCalled();
+    expect(dispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-origin completion and hides another owner's upload", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.uploads = [
+      {
+        inspection: inspectionRecord(firstInspectionId, otherOwnerId),
+        job: null,
+      },
+    ];
+    const storage = new FakeStorage();
+    const dispatcher = new FakeTaskDispatcher();
+    const app = inspectionApp(repository, storage, dispatcher);
+
+    const crossOrigin = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", "https://attacker.example"),
+    ).send({});
+    const crossOwner = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(crossOrigin.status).toBe(403);
+    expect(crossOrigin.body.error.code).toBe("access_denied");
+    expect(crossOwner.status).toBe(404);
+    expect(crossOwner.body.error.code).toBe("inspection_not_found");
+    expect(repository.findOwnedUploadCompletionById).toHaveBeenCalledWith(
+      owner.id,
+      firstInspectionId,
+    );
+    expect(storage.metadata).not.toHaveBeenCalled();
+    expect(dispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("creates and dispatches one durable job after completion, then returns it idempotently", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.uploads = [
+      { inspection: inspectionRecord(firstInspectionId), job: null },
+    ];
+    const storage = new FakeStorage();
+    storage.metadata.mockResolvedValue({
+      key: `inspections/${firstInspectionId}/source`,
+      sizeBytes: 4096,
+    });
+    const dispatcher = new FakeTaskDispatcher();
+    const app = inspectionApp(repository, storage, dispatcher);
+
+    const first = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+    const duplicate = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({
+      inspection: { id: firstInspectionId, status: "queued" },
+      job: { status: "queued" },
+    });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.job).toEqual(first.body.job);
+    expect(repository.completeOwnedUpload).toHaveBeenCalledTimes(1);
+    expect(dispatcher.dispatch).toHaveBeenCalledTimes(1);
+    expect(storage.metadata).toHaveBeenCalledTimes(1);
+    expect(
+      repository.completeOwnedUpload.mock.invocationCallOrder[0],
+    ).toBeLessThan(dispatcher.dispatch.mock.invocationCallOrder[0]!);
+    expect(repository.uploads[0]?.job).toMatchObject({
+      status: "queued",
+      taskName: deterministicTaskName({
+        jobId: first.body.job.id,
+        dispatchGeneration: 1,
+      }),
+      taskEnqueuedAt: currentTime,
+    });
+  });
+
+  it("does not dispatch when the completion transaction fails", async () => {
+    const repository = new FakeInspectionRepository();
+    const upload = {
+      inspection: inspectionRecord(firstInspectionId),
+      job: null,
+    };
+    repository.uploads = [upload];
+    repository.completeOwnedUpload.mockRejectedValueOnce(
+      new Error("simulated commit failure"),
+    );
+    const storage = new FakeStorage();
+    storage.metadata.mockResolvedValue({
+      key: upload.inspection.sourceObjectKey,
+      sizeBytes: 4096,
+    });
+    const dispatcher = new FakeTaskDispatcher();
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage, dispatcher))
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(response.status).toBe(503);
+    expect(dispatcher.dispatch).not.toHaveBeenCalled();
+    expect(upload).toMatchObject({
+      inspection: { status: "awaiting_upload" },
+      job: null,
+    });
+  });
+
+  it("keeps a failed dispatch pending and recovers it on a repeated completion", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.uploads = [
+      { inspection: inspectionRecord(firstInspectionId), job: null },
+    ];
+    const storage = new FakeStorage();
+    storage.metadata.mockResolvedValue({
+      key: `inspections/${firstInspectionId}/source`,
+      sizeBytes: 4096,
+    });
+    const dispatcher = new FakeTaskDispatcher();
+    dispatcher.dispatch.mockRejectedValueOnce(
+      new Error("simulated dispatch failure"),
+    );
+    const app = inspectionApp(repository, storage, dispatcher);
+
+    const failed = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+    expect(failed.status).toBe(503);
+    expect(repository.uploads[0]?.job).toMatchObject({
+      status: "pending_dispatch",
+      taskEnqueuedAt: null,
+      taskName: null,
+    });
+
+    const recovered = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/upload-complete`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.job).toMatchObject({
+      id: repository.uploads[0]?.job?.id,
+      status: "queued",
+    });
+    expect(repository.completeOwnedUpload).toHaveBeenCalledTimes(1);
+    expect(storage.metadata).toHaveBeenCalledTimes(1);
+    expect(dispatcher.dispatch).toHaveBeenCalledTimes(2);
   });
 
   it("emits and validates an opaque stable pagination cursor", async () => {
