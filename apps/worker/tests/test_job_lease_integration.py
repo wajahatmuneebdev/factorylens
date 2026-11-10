@@ -141,8 +141,13 @@ def test_inspected_media_metadata_requires_the_current_lease_token(
     )
     store = PostgresMediaMetadataStore(database_url)
 
-    assert not store.record(queued_job, uuid4(), metadata)
-    assert store.record(queued_job, decision.lease.token, metadata)
+    assert not store.record(queued_job, uuid4(), metadata, None)
+    normalized_object_key = (
+        f"inspections/{decision.lease.inspection_id}/generations/1/normalized"
+    )
+    assert store.record(
+        queued_job, decision.lease.token, metadata, normalized_object_key
+    )
 
     with psycopg.connect(database_url) as connection:
         row = connection.execute(
@@ -155,7 +160,8 @@ def test_inspected_media_metadata_requires_the_current_lease_token(
                 inspected_height,
                 inspected_container,
                 inspected_frame_rate,
-                inspected_streams
+                inspected_streams,
+                normalized_object_key
             from inspections
             where id = %s
             """,
@@ -181,6 +187,7 @@ def test_inspected_media_metadata_requires_the_current_lease_token(
                 "frameRate": "5/1",
             }
         ],
+        normalized_object_key,
     )
 
 

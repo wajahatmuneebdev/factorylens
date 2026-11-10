@@ -28,7 +28,8 @@ rate-controlled, OIDC-authenticated worker dispatch. The Python worker also has
 a validated internal task endpoint, atomic PostgreSQL job leases, a
 provider-neutral Workflow boundary, and deterministic fixture inference for the
 prepared sample. Its bounded media-validation stage now inspects source bytes
-with ffprobe and persists trusted stream metadata. Google sign-in,
+with ffprobe, passes compatible media through, and uses bounded FFmpeg
+normalization only for incompatible input. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload

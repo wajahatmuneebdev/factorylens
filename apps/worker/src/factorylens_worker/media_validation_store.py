@@ -10,6 +10,7 @@ from factorylens_worker.media_validation import InspectedMediaMetadata
 _RECORD_MEDIA_METADATA = """
 update inspections as inspection
 set
+    normalized_object_key = %s,
     inspected_content_type = %s,
     inspected_size_bytes = %s,
     inspected_duration_ms = %s,
@@ -39,12 +40,14 @@ class PostgresMediaMetadataStore:
         job_id: UUID,
         lease_token: UUID,
         metadata: InspectedMediaMetadata,
+        normalized_object_key: str | None,
     ) -> bool:
         with psycopg.connect(self._database_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     _RECORD_MEDIA_METADATA,
                     (
+                        normalized_object_key,
                         metadata.content_type,
                         metadata.size_bytes,
                         metadata.duration_ms,

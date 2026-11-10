@@ -167,6 +167,13 @@ For an accepted job, the worker:
 10. Writes the compressed artifact to R2.
 11. Commits the relational summary and terminal state idempotently.
 
+The media compatibility decision is explicit. WebM with VP8 or VP9 video and
+optional Opus or Vorbis audio passes through, as does MP4-family media with
+H.264 video and optional AAC audio. Other valid input is normalized to an MP4
+containing H.264 video and AAC audio. FFmpeg conversion bounds elapsed time,
+output size, threads, and muxing queues; the worker probes the normalized file
+again before storing it under the job's generation-specific object prefix.
+
 The worker API key and R2 write credential remain server-side. Temporary files are bounded and removed after the request.
 
 ### 4.8 Roboflow Workflow endpoint
