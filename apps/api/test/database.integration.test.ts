@@ -24,7 +24,10 @@ import { PostgresAuthStore } from "../src/db/auth-store.js";
 import { PostgresInspectionRepository } from "../src/db/inspection-repository.js";
 import * as schema from "../src/db/schema.js";
 import { hashSessionToken } from "../src/session.js";
-import { LocalFilesystemStorage } from "../src/storage.js";
+import {
+  LocalFilesystemStorage,
+  type ObjectAccessAuthorizer,
+} from "../src/storage.js";
 import {
   deterministicTaskName,
   type TaskDispatcher,
@@ -106,12 +109,29 @@ describe("PostgreSQL migrations", () => {
     );
     storageRoots.push(storageRoot);
     const storage = new LocalFilesystemStorage(storageRoot);
+    const objectAccess: ObjectAccessAuthorizer = {
+      async authorizeDownload(key) {
+        return {
+          url: `https://storage.example/${key}?signature=download`,
+          expiresAt: new Date(currentTime.getTime() + 10 * 60 * 1000),
+        };
+      },
+      async authorizeUpload(key, contentType) {
+        return {
+          method: "PUT",
+          url: `https://storage.example/${key}?signature=upload`,
+          headers: { "Content-Type": contentType },
+          expiresAt: new Date(currentTime.getTime() + 10 * 60 * 1000),
+        };
+      },
+    };
     const repository = new PostgresInspectionRepository(database);
     const app = createApp({
       appOrigin,
       callbackUrl: new URL("/auth/google/callback", appOrigin),
       inspections: repository,
       now: () => currentTime,
+      objectAccess,
       oidcProvider,
       storage,
       store,

@@ -7,7 +7,7 @@ import { PostgresAuthStore } from "./db/auth-store.js";
 import { PostgresInspectionRepository } from "./db/inspection-repository.js";
 import * as schema from "./db/schema.js";
 import { createGoogleOidcProvider } from "./google-oidc.js";
-import { LocalFilesystemStorage } from "./storage.js";
+import { R2ObjectStorage } from "./storage.js";
 import { LocalTaskDispatcher } from "./task-dispatcher.js";
 
 const environmentSchema = z.object({
@@ -18,7 +18,10 @@ const environmentSchema = z.object({
   DATABASE_URL: z.string().startsWith("postgresql://"),
   GOOGLE_OIDC_CLIENT_ID: z.string().min(1),
   GOOGLE_OIDC_CLIENT_SECRET: z.string().min(1),
-  LOCAL_STORAGE_ROOT: z.string().min(1).default(".factorylens/storage"),
+  R2_ACCESS_KEY_ID: z.string().min(1),
+  R2_ACCOUNT_ID: z.string().regex(/^[0-9a-f]{32}$/i),
+  R2_BUCKET: z.string().min(1),
+  R2_SECRET_ACCESS_KEY: z.string().min(1),
 });
 
 async function start(): Promise<void> {
@@ -48,12 +51,19 @@ async function start(): Promise<void> {
     await databaseClient.end();
     throw error;
   }
+  const storage = new R2ObjectStorage({
+    accessKeyId: environment.R2_ACCESS_KEY_ID,
+    bucket: environment.R2_BUCKET,
+    endpoint: `https://${environment.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    secretAccessKey: environment.R2_SECRET_ACCESS_KEY,
+  });
   const app = createApp({
     appOrigin,
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     oidcProvider,
     inspections: new PostgresInspectionRepository(database),
-    storage: new LocalFilesystemStorage(environment.LOCAL_STORAGE_ROOT),
+    objectAccess: storage,
+    storage,
     store,
     taskDispatcher: new LocalTaskDispatcher({
       invokeWorker: () => undefined,

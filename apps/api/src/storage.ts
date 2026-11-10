@@ -2,8 +2,19 @@ import { createWriteStream } from "node:fs";
 import { mkdir, open, rename, rm, rmdir, stat, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Readable } from "node:stream";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutBucketCorsCommand,
+  PutObjectCommand,
+  S3Client,
+  type CORSConfiguration,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export interface StorageObjectMetadata {
   key: string;
@@ -16,6 +27,26 @@ export interface ObjectStorage {
   metadata(key: string): Promise<StorageObjectMetadata>;
   exists(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
+}
+
+export interface UploadAuthorization {
+  method: "PUT";
+  url: string;
+  headers: Record<string, string>;
+  expiresAt: Date;
+}
+
+export interface DownloadAuthorization {
+  url: string;
+  expiresAt: Date;
+}
+
+export interface ObjectAccessAuthorizer {
+  authorizeUpload(
+    key: string,
+    contentType: string,
+  ): Promise<UploadAuthorization>;
+  authorizeDownload(key: string): Promise<DownloadAuthorization>;
 }
 
 export interface ProcessingObjectKeys {
@@ -89,6 +120,212 @@ function validateObjectKey(key: string): void {
     segments.some((segment) => !KEY_SEGMENT_PATTERN.test(segment))
   ) {
     throw new InvalidStorageObjectKeyError(key);
+  }
+}
+
+const DEFAULT_AUTHORIZATION_TTL_SECONDS = 10 * 60;
+
+export interface R2ObjectStorageOptions {
+  accessKeyId: string;
+  authorizationTtlSeconds?: number;
+  bucket: string;
+  endpoint: string;
+  forcePathStyle?: boolean;
+  now?: () => Date;
+  secretAccessKey: string;
+}
+
+function isMissingObjectError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "NoSuchKey" ||
+      error.name === "NotFound" ||
+      ("$metadata" in error &&
+        typeof error.$metadata === "object" &&
+        error.$metadata !== null &&
+        "httpStatusCode" in error.$metadata &&
+        error.$metadata.httpStatusCode === 404))
+  );
+}
+
+export function factoryLensR2CorsConfiguration(
+  appOrigin: URL,
+): CORSConfiguration {
+  return {
+    CORSRules: [
+      {
+        AllowedHeaders: ["content-type", "range"],
+        AllowedMethods: ["GET", "PUT"],
+        AllowedOrigins: [appOrigin.origin],
+        ExposeHeaders: [
+          "accept-ranges",
+          "content-length",
+          "content-range",
+          "etag",
+        ],
+        MaxAgeSeconds: 3600,
+      },
+    ],
+  };
+}
+
+export class R2ObjectStorage implements ObjectStorage, ObjectAccessAuthorizer {
+  private readonly authorizationTtlSeconds: number;
+  private readonly bucket: string;
+  private readonly client: S3Client;
+  private readonly now: () => Date;
+
+  constructor(options: R2ObjectStorageOptions) {
+    const authorizationTtlSeconds =
+      options.authorizationTtlSeconds ?? DEFAULT_AUTHORIZATION_TTL_SECONDS;
+    if (
+      !Number.isSafeInteger(authorizationTtlSeconds) ||
+      authorizationTtlSeconds < 1 ||
+      authorizationTtlSeconds > 3600
+    ) {
+      throw new TypeError(
+        "authorizationTtlSeconds must be an integer from 1 through 3600",
+      );
+    }
+
+    this.authorizationTtlSeconds = authorizationTtlSeconds;
+    this.bucket = options.bucket;
+    this.now = options.now ?? (() => new Date());
+    this.client = new S3Client({
+      credentials: {
+        accessKeyId: options.accessKeyId,
+        secretAccessKey: options.secretAccessKey,
+      },
+      endpoint: options.endpoint,
+      forcePathStyle: options.forcePathStyle,
+      region: "auto",
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
+    });
+  }
+
+  async put(key: string, source: Readable): Promise<StorageObjectMetadata> {
+    validateObjectKey(key);
+    await this.client.send(
+      new PutObjectCommand({
+        Body: source,
+        Bucket: this.bucket,
+        Key: key,
+      }),
+    );
+    return this.metadata(key);
+  }
+
+  async read(key: string): Promise<Readable> {
+    validateObjectKey(key);
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (!(response.Body instanceof Readable)) {
+        throw new Error("R2 returned an unsupported object body");
+      }
+      return response.Body;
+    } catch (error) {
+      if (isMissingObjectError(error)) {
+        throw new StorageObjectNotFoundError(key);
+      }
+      throw error;
+    }
+  }
+
+  async metadata(key: string): Promise<StorageObjectMetadata> {
+    validateObjectKey(key);
+    try {
+      const response = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      if (response.ContentLength === undefined) {
+        throw new Error("R2 object metadata did not include a content length");
+      }
+      return { key, sizeBytes: response.ContentLength };
+    } catch (error) {
+      if (isMissingObjectError(error)) {
+        throw new StorageObjectNotFoundError(key);
+      }
+      throw error;
+    }
+  }
+
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.metadata(key);
+      return true;
+    } catch (error) {
+      if (error instanceof StorageObjectNotFoundError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    validateObjectKey(key);
+    await this.client.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+  }
+
+  async authorizeUpload(
+    key: string,
+    contentType: string,
+  ): Promise<UploadAuthorization> {
+    validateObjectKey(key);
+    const signingDate = this.now();
+    const url = await getSignedUrl(
+      this.client,
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        ContentType: contentType,
+        Key: key,
+      }),
+      {
+        expiresIn: this.authorizationTtlSeconds,
+        signableHeaders: new Set(["content-type"]),
+        signingDate,
+      },
+    );
+    return {
+      method: "PUT",
+      url,
+      headers: { "Content-Type": contentType },
+      expiresAt: new Date(
+        signingDate.getTime() + this.authorizationTtlSeconds * 1000,
+      ),
+    };
+  }
+
+  async authorizeDownload(key: string): Promise<DownloadAuthorization> {
+    validateObjectKey(key);
+    const signingDate = this.now();
+    const url = await getSignedUrl(
+      this.client,
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      {
+        expiresIn: this.authorizationTtlSeconds,
+        signingDate,
+      },
+    );
+    return {
+      url,
+      expiresAt: new Date(
+        signingDate.getTime() + this.authorizationTtlSeconds * 1000,
+      ),
+    };
+  }
+
+  async configureCors(appOrigin: URL): Promise<void> {
+    await this.client.send(
+      new PutBucketCorsCommand({
+        Bucket: this.bucket,
+        CORSConfiguration: factoryLensR2CorsConfiguration(appOrigin),
+      }),
+    );
   }
 }
 
