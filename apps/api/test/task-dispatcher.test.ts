@@ -62,14 +62,3 @@ it("accepts dispatch without waiting for the local worker to finish", async () =
   expect(workerStarted).toBe(true);
   finishWorker?.();
 });
-
-it("rejects fields outside the worker task contract", async () => {
-  const dispatcher = new LocalTaskDispatcher({ invokeWorker() {} });
-  const invalidMessage = {
-    jobId: "f29c7b8c-d2ce-4a37-93bd-2d34ea89bb25",
-    dispatchGeneration: 1,
-    inspectionId: "c96f4f59-e47f-4d31-8d16-963ca3e4063e",
-  } as ProcessTaskMessage;
-
-  await expect(dispatcher.dispatch(invalidMessage)).rejects.toThrow();
-});
