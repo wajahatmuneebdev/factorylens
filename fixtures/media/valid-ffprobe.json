@@ -1,0 +1,26 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "vp9",
+      "codec_type": "video",
+      "width": 1840,
+      "height": 1080,
+      "avg_frame_rate": "5/1",
+      "r_frame_rate": "5/1",
+      "duration": "2.000000"
+    },
+    {
+      "index": 1,
+      "codec_name": "opus",
+      "codec_type": "audio",
+      "avg_frame_rate": "0/0",
+      "r_frame_rate": "0/0",
+      "duration": "2.000000"
+    }
+  ],
+  "format": {
+    "format_name": "matroska,webm",
+    "duration": "2.000000"
+  }
+}

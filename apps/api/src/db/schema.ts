@@ -5,6 +5,7 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   timestamp,
@@ -99,6 +100,19 @@ export const inspections = pgTable(
     inspectedDurationMs: bigint("inspected_duration_ms", { mode: "number" }),
     inspectedWidth: integer("inspected_width"),
     inspectedHeight: integer("inspected_height"),
+    inspectedContainer: varchar("inspected_container", { length: 120 }),
+    inspectedFrameRate: varchar("inspected_frame_rate", { length: 32 }),
+    inspectedStreams: jsonb("inspected_streams").$type<
+      Array<{
+        index: number;
+        type: "video" | "audio";
+        codec: string;
+        durationMs: number | null;
+        width: number | null;
+        height: number | null;
+        frameRate: string | null;
+      }>
+    >(),
     predictionSchemaVersion: integer("prediction_schema_version"),
     workflowFingerprint: varchar("workflow_fingerprint", { length: 71 }),
     missingHardHatEventCount: integer("missing_hard_hat_event_count"),

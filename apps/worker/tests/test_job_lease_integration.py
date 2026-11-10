@@ -9,6 +9,11 @@ import pytest
 
 from factorylens_worker.contracts import ProcessTaskMessage
 from factorylens_worker.job_lease import LeaseOutcome, PostgresJobLeaseStore
+from factorylens_worker.media_validation import (
+    InspectedMediaMetadata,
+    MediaStreamMetadata,
+)
+from factorylens_worker.media_validation_store import PostgresMediaMetadataStore
 
 database_url = os.environ.get("TEST_DATABASE_URL")
 pytestmark = [
@@ -104,6 +109,79 @@ def test_progress_requires_the_current_lease_token(queued_job: UUID) -> None:
 
     assert not store.record_progress(queued_job, uuid4(), "download", 10)
     assert store.record_progress(queued_job, decision.lease.token, "download", 10)
+
+
+def test_inspected_media_metadata_requires_the_current_lease_token(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    decision = PostgresJobLeaseStore(database_url).acquire(
+        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    )
+    assert decision.lease is not None
+    metadata = InspectedMediaMetadata(
+        size_bytes=4096,
+        content_type="video/webm",
+        duration_ms=2000,
+        width=1840,
+        height=1080,
+        container="matroska,webm",
+        frame_rate="5/1",
+        streams=(
+            MediaStreamMetadata(
+                index=0,
+                type="video",
+                codec="vp9",
+                duration_ms=2000,
+                width=1840,
+                height=1080,
+                frame_rate="5/1",
+            ),
+        ),
+    )
+    store = PostgresMediaMetadataStore(database_url)
+
+    assert not store.record(queued_job, uuid4(), metadata)
+    assert store.record(queued_job, decision.lease.token, metadata)
+
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select
+                inspected_content_type,
+                inspected_size_bytes,
+                inspected_duration_ms,
+                inspected_width,
+                inspected_height,
+                inspected_container,
+                inspected_frame_rate,
+                inspected_streams
+            from inspections
+            where id = %s
+            """,
+            (decision.lease.inspection_id,),
+        ).fetchone()
+
+    assert row == (
+        "video/webm",
+        4096,
+        2000,
+        1840,
+        1080,
+        "matroska,webm",
+        "5/1",
+        [
+            {
+                "index": 0,
+                "type": "video",
+                "codec": "vp9",
+                "durationMs": 2000,
+                "width": 1840,
+                "height": 1080,
+                "frameRate": "5/1",
+            }
+        ],
+    )
 
 
 def test_stale_generation_is_rejected_before_leasing(queued_job: UUID) -> None:
