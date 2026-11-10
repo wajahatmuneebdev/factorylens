@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  CancelInspectionRequestSchema,
   CreateInspectionRequestSchema,
   ERROR_DEFINITIONS,
   ErrorCodeSchema,
   InspectionPathParamsSchema,
   InspectionSchema,
   ListInspectionsQuerySchema,
+  RetryInspectionRequestSchema,
   UploadCompleteRequestSchema,
   type Inspection,
   type SafeError,
@@ -24,7 +26,10 @@ import type {
   InspectionViewRecord,
   UploadCompletionRecord,
 } from "./db/inspection-repository.js";
-import { InspectionStateConflictError } from "./db/inspection-repository.js";
+import {
+  InspectionCommandConflictError,
+  InspectionStateConflictError,
+} from "./db/inspection-repository.js";
 import { authenticatedUser } from "./session.js";
 import {
   type ObjectStorage,
@@ -143,6 +148,39 @@ function uploadCompleteResponse(record: UploadCompletionRecord) {
     inspection: inspectionResponse(record),
     job: { id: record.job.id, status: record.job.status },
   };
+}
+
+async function dispatchPendingJob(
+  dependencies: InspectionRouteDependencies,
+  ownerUserId: string,
+  inspectionId: string,
+  completion: UploadCompletionRecord,
+  now: Date,
+): Promise<UploadCompletionRecord> {
+  const job = completion.job;
+  if (!job) {
+    throw new Error("Inspection command has no durable job");
+  }
+  if (job.status !== "pending_dispatch" || job.taskEnqueuedAt !== null) {
+    return completion;
+  }
+
+  const dispatched = await dependencies.taskDispatcher.dispatch({
+    dispatchGeneration: job.dispatchGeneration,
+    jobId: job.id,
+  });
+  const marked = await dependencies.repository.markOwnedJobDispatched(
+    ownerUserId,
+    inspectionId,
+    job.id,
+    job.dispatchGeneration,
+    dispatched.taskName,
+    now,
+  );
+  if (!marked?.job) {
+    throw new Error("Dispatched job could not be recorded");
+  }
+  return marked;
 }
 
 export function registerInspectionRoutes(
@@ -379,22 +417,13 @@ export function registerInspectionRoutes(
 
       if (job.status === "pending_dispatch" && job.taskEnqueuedAt === null) {
         try {
-          const dispatched = await dependencies.taskDispatcher.dispatch({
-            dispatchGeneration: job.dispatchGeneration,
-            jobId: job.id,
-          });
-          const marked = await dependencies.repository.markOwnedJobDispatched(
+          completion = await dispatchPendingJob(
+            dependencies,
             ownerUserId,
             path.data.id,
-            job.id,
-            job.dispatchGeneration,
-            dispatched.taskName,
+            completion,
             now(),
           );
-          if (!marked?.job) {
-            throw new Error("Dispatched job could not be recorded");
-          }
-          completion = marked;
         } catch {
           sendSafeError(response, 503, {
             code: "provider_unavailable",
@@ -438,6 +467,127 @@ export function registerInspectionRoutes(
         message: "Inspection access is temporarily unavailable.",
       });
     }
+  });
+
+  app.post("/api/inspections/:id/cancel", async (request, response) => {
+    if (request.get("origin") !== dependencies.appOrigin.origin) {
+      sendSafeError(response, 403, {
+        code: "access_denied",
+        category: "authorization",
+        message: "The inspection request origin is not allowed.",
+      });
+      return;
+    }
+
+    const path = InspectionPathParamsSchema.safeParse(request.params);
+    const body = CancelInspectionRequestSchema.safeParse(request.body);
+    if (!path.success || !body.success) {
+      sendInvalidRequest(response, "The cancellation request is invalid.");
+      return;
+    }
+
+    try {
+      const inspection = await dependencies.repository.requestOwnedCancellation(
+        authenticatedUser(request).id,
+        path.data.id,
+        now(),
+      );
+      if (!inspection) {
+        sendSafeError(response, 404, {
+          code: "inspection_not_found",
+          category: "terminal",
+          message: "Inspection not found.",
+        });
+        return;
+      }
+
+      response.json({ inspection: inspectionResponse(inspection) });
+    } catch (error) {
+      if (error instanceof InspectionCommandConflictError) {
+        sendSafeError(response, 409, {
+          code: "inspection_state_conflict",
+          category: "terminal",
+          message: "This inspection cannot be cancelled.",
+        });
+        return;
+      }
+      sendSafeError(response, 503, {
+        code: "provider_unavailable",
+        category: "retryable",
+        message: "Inspection cancellation is temporarily unavailable.",
+      });
+    }
+  });
+
+  app.post("/api/inspections/:id/retry", async (request, response) => {
+    if (request.get("origin") !== dependencies.appOrigin.origin) {
+      sendSafeError(response, 403, {
+        code: "access_denied",
+        category: "authorization",
+        message: "The inspection request origin is not allowed.",
+      });
+      return;
+    }
+
+    const path = InspectionPathParamsSchema.safeParse(request.params);
+    const body = RetryInspectionRequestSchema.safeParse(request.body);
+    if (!path.success || !body.success) {
+      sendInvalidRequest(response, "The retry request is invalid.");
+      return;
+    }
+
+    const ownerUserId = authenticatedUser(request).id;
+    let completion: UploadCompletionRecord | null;
+    try {
+      completion = await dependencies.repository.retryOwnedFailure(
+        ownerUserId,
+        path.data.id,
+        now(),
+      );
+    } catch (error) {
+      if (error instanceof InspectionCommandConflictError) {
+        sendSafeError(response, 409, {
+          code: "inspection_state_conflict",
+          category: "terminal",
+          message: "This inspection cannot be retried.",
+        });
+        return;
+      }
+      sendSafeError(response, 503, {
+        code: "provider_unavailable",
+        category: "retryable",
+        message: "Inspection retry is temporarily unavailable.",
+      });
+      return;
+    }
+
+    if (!completion) {
+      sendSafeError(response, 404, {
+        code: "inspection_not_found",
+        category: "terminal",
+        message: "Inspection not found.",
+      });
+      return;
+    }
+
+    try {
+      completion = await dispatchPendingJob(
+        dependencies,
+        ownerUserId,
+        path.data.id,
+        completion,
+        now(),
+      );
+    } catch {
+      sendSafeError(response, 503, {
+        code: "provider_unavailable",
+        category: "retryable",
+        message: "Processing dispatch is temporarily unavailable.",
+      });
+      return;
+    }
+
+    response.json({ inspection: inspectionResponse(completion) });
   });
 
   const invalidBodyHandler: ErrorRequestHandler = (

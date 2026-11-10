@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
+import {
+  ERROR_DEFINITIONS,
+  type ErrorCode,
+  type InspectionState,
+  type JobState,
+} from "@factorylens/contracts";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
@@ -145,6 +151,110 @@ describe("PostgreSQL migrations", () => {
       .set("Origin", appOrigin.origin)
       .set("Cookie", `__Host-factorylens_session=${token}`)
       .send({});
+  }
+
+  function runInspectionCommand(
+    app: ReturnType<typeof createApp>,
+    token: string,
+    inspectionId: string,
+    command: "cancel" | "retry",
+  ) {
+    return request(app)
+      .post(`/api/inspections/${inspectionId}/${command}`)
+      .set("Origin", appOrigin.origin)
+      .set("Cookie", `__Host-factorylens_session=${token}`)
+      .send({});
+  }
+
+  async function createCommandInspection(
+    ownerUserId: string,
+    inspectionStatus: InspectionState,
+    jobStatus: JobState | null,
+    errorCode: ErrorCode | null = null,
+  ) {
+    const inspectionId = randomUUID();
+    const predictionObjectKey = `inspections/${inspectionId}/predictions/generation-4.json`;
+    await sql`
+      insert into inspections (
+        id,
+        owner_user_id,
+        title,
+        status,
+        source_type,
+        workflow_key,
+        source_object_key,
+        prediction_object_key,
+        error_code,
+        error_message,
+        queued_at,
+        started_at,
+        completed_at,
+        updated_at
+      )
+      values (
+        ${inspectionId},
+        ${ownerUserId},
+        'Inspection command fixture',
+        ${inspectionStatus}::inspection_status,
+        'upload',
+        'factory-safety-v1',
+        ${`inspections/${inspectionId}/source`},
+        ${predictionObjectKey},
+        ${errorCode},
+        ${errorCode ? "A safe processing failure occurred." : null},
+        ${inspectionStatus === "awaiting_upload" ? null : "2026-11-09T06:00:00.000Z"},
+        ${inspectionStatus === "processing" || inspectionStatus === "completed" || inspectionStatus === "failed" ? "2026-11-09T06:10:00.000Z" : null},
+        ${inspectionStatus === "completed" || inspectionStatus === "failed" || inspectionStatus === "cancelled" ? "2026-11-09T07:00:00.000Z" : null},
+        '2026-11-09T07:00:00.000Z'
+      )
+    `;
+
+    if (!jobStatus) {
+      return { inspectionId, jobId: null, predictionObjectKey };
+    }
+
+    const jobId = randomUUID();
+    const oldTaskName = deterministicTaskName({
+      dispatchGeneration: 4,
+      jobId,
+    });
+    await sql`
+      insert into jobs (
+        id,
+        inspection_id,
+        status,
+        stage,
+        progress_percent,
+        attempt_count,
+        dispatch_generation,
+        task_name,
+        task_enqueued_at,
+        cancel_requested_at,
+        error_code,
+        error_message,
+        started_at,
+        finished_at,
+        updated_at
+      )
+      values (
+        ${jobId},
+        ${inspectionId},
+        ${jobStatus}::job_status,
+        'workflow',
+        75,
+        3,
+        4,
+        ${oldTaskName},
+        '2026-11-09T06:00:00.000Z',
+        ${inspectionStatus === "cancelled" ? "2026-11-09T06:30:00.000Z" : null},
+        ${errorCode},
+        ${errorCode ? "A safe processing failure occurred." : null},
+        '2026-11-09T06:10:00.000Z',
+        ${jobStatus === "failed" || jobStatus === "completed" || jobStatus === "cancelled" ? "2026-11-09T07:00:00.000Z" : null},
+        '2026-11-09T07:00:00.000Z'
+      )
+    `;
+    return { inspectionId, jobId, predictionObjectKey };
   }
 
   it("creates the four tables and enforces identity, ownership, and job constraints", async () => {
@@ -754,5 +864,320 @@ describe("PostgreSQL migrations", () => {
     expect(new Date(queued!.task_enqueued_at!).toISOString()).toBe(
       currentTime.toISOString(),
     );
+  });
+
+  it("records cancellation only for cancellable states and is idempotent", async () => {
+    const dispatcher = new RecordingTaskDispatcher();
+    const { app, token, user } = await createUploadHarness(dispatcher);
+    const cases: {
+      allowed: boolean;
+      inspectionStatus: InspectionState;
+      jobStatus: JobState | null;
+    }[] = [
+      { allowed: false, inspectionStatus: "awaiting_upload", jobStatus: null },
+      { allowed: true, inspectionStatus: "queued", jobStatus: "queued" },
+      { allowed: true, inspectionStatus: "processing", jobStatus: "running" },
+      { allowed: false, inspectionStatus: "completed", jobStatus: "completed" },
+      { allowed: false, inspectionStatus: "failed", jobStatus: "failed" },
+      { allowed: true, inspectionStatus: "cancelled", jobStatus: "cancelled" },
+    ];
+
+    for (const testCase of cases) {
+      const fixture = await createCommandInspection(
+        user.id,
+        testCase.inspectionStatus,
+        testCase.jobStatus,
+        testCase.inspectionStatus === "failed" ? "invalid_media" : null,
+      );
+      const first = await runInspectionCommand(
+        app,
+        token,
+        fixture.inspectionId,
+        "cancel",
+      );
+
+      expect(first.status, testCase.inspectionStatus).toBe(
+        testCase.allowed ? 200 : 409,
+      );
+      if (testCase.allowed) {
+        expect(first.body.inspection.status).toBe(testCase.inspectionStatus);
+        const [afterFirst] = await sql<
+          {
+            cancel_requested_at: Date | null;
+            inspection_status: string;
+            prediction_object_key: string | null;
+          }[]
+        >`
+          select
+            inspections.status as inspection_status,
+            inspections.prediction_object_key,
+            jobs.cancel_requested_at
+          from inspections
+          inner join jobs on jobs.inspection_id = inspections.id
+          where inspections.id = ${fixture.inspectionId}
+        `;
+        expect(afterFirst?.cancel_requested_at).not.toBeNull();
+        expect(afterFirst?.inspection_status).toBe(testCase.inspectionStatus);
+        expect(afterFirst?.prediction_object_key).toBe(
+          fixture.predictionObjectKey,
+        );
+
+        const duplicate = await runInspectionCommand(
+          app,
+          token,
+          fixture.inspectionId,
+          "cancel",
+        );
+        expect(duplicate.status).toBe(200);
+        const [afterDuplicate] = await sql<
+          { cancel_requested_at: Date | null }[]
+        >`
+          select cancel_requested_at
+          from jobs
+          where inspection_id = ${fixture.inspectionId}
+        `;
+        expect(afterDuplicate?.cancel_requested_at).toEqual(
+          afterFirst?.cancel_requested_at,
+        );
+      } else {
+        expect(first.body.error.code).toBe("inspection_state_conflict");
+        if (fixture.jobId) {
+          const [job] = await sql<{ cancel_requested_at: Date | null }[]>`
+            select cancel_requested_at from jobs where id = ${fixture.jobId}
+          `;
+          expect(job?.cancel_requested_at).toBeNull();
+        }
+      }
+    }
+    expect(dispatcher.messages).toEqual([]);
+  });
+
+  it("retries every documented retryable failure with a new dispatch generation", async () => {
+    const dispatcher = new RecordingTaskDispatcher();
+    const { app, token, user } = await createUploadHarness(dispatcher);
+    const retryableCodes = Object.entries(ERROR_DEFINITIONS)
+      .filter(([, category]) => category === "retryable")
+      .map(([code]) => code as ErrorCode);
+
+    for (const errorCode of retryableCodes) {
+      const fixture = await createCommandInspection(
+        user.id,
+        "failed",
+        "failed",
+        errorCode,
+      );
+      const response = await runInspectionCommand(
+        app,
+        token,
+        fixture.inspectionId,
+        "retry",
+      );
+
+      expect(response.status, errorCode).toBe(200);
+      expect(response.body.inspection).toMatchObject({
+        id: fixture.inspectionId,
+        status: "queued",
+        error: null,
+        progress: { stage: null, percent: 0 },
+      });
+      const [stored] = await sql<
+        {
+          attempt_count: number;
+          cancel_requested_at: Date | null;
+          dispatch_generation: number;
+          error_code: string | null;
+          inspection_status: string;
+          prediction_object_key: string | null;
+          progress_percent: number;
+          status: string;
+          task_name: string | null;
+        }[]
+      >`
+        select
+          inspections.status as inspection_status,
+          inspections.prediction_object_key,
+          jobs.status,
+          jobs.attempt_count,
+          jobs.cancel_requested_at,
+          jobs.dispatch_generation,
+          jobs.error_code,
+          jobs.progress_percent,
+          jobs.task_name
+        from inspections
+        inner join jobs on jobs.inspection_id = inspections.id
+        where inspections.id = ${fixture.inspectionId}
+      `;
+      expect(stored).toMatchObject({
+        attempt_count: 0,
+        cancel_requested_at: null,
+        dispatch_generation: 5,
+        error_code: null,
+        inspection_status: "queued",
+        prediction_object_key: fixture.predictionObjectKey,
+        progress_percent: 0,
+        status: "queued",
+        task_name: deterministicTaskName({
+          dispatchGeneration: 5,
+          jobId: fixture.jobId!,
+        }),
+      });
+    }
+
+    expect(dispatcher.messages).toHaveLength(retryableCodes.length);
+    expect(
+      dispatcher.messages.every(
+        ({ dispatchGeneration }) => dispatchGeneration === 5,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects retry from every non-failed state and every non-retryable failure", async () => {
+    const dispatcher = new RecordingTaskDispatcher();
+    const { app, token, user } = await createUploadHarness(dispatcher);
+    const stateCases: [InspectionState, JobState | null][] = [
+      ["awaiting_upload", null],
+      ["queued", "queued"],
+      ["processing", "running"],
+      ["completed", "completed"],
+      ["cancelled", "cancelled"],
+    ];
+
+    for (const [inspectionStatus, jobStatus] of stateCases) {
+      const fixture = await createCommandInspection(
+        user.id,
+        inspectionStatus,
+        jobStatus,
+        null,
+      );
+      const response = await runInspectionCommand(
+        app,
+        token,
+        fixture.inspectionId,
+        "retry",
+      );
+      expect(response.status, inspectionStatus).toBe(409);
+      expect(response.body.error.code).toBe("inspection_state_conflict");
+    }
+
+    const nonRetryableCodes = Object.entries(ERROR_DEFINITIONS)
+      .filter(([, category]) => category !== "retryable")
+      .map(([code]) => code as ErrorCode);
+    for (const errorCode of nonRetryableCodes) {
+      const fixture = await createCommandInspection(
+        user.id,
+        "failed",
+        "failed",
+        errorCode,
+      );
+      const response = await runInspectionCommand(
+        app,
+        token,
+        fixture.inspectionId,
+        "retry",
+      );
+      expect(response.status, errorCode).toBe(409);
+      expect(response.body.error.code).toBe("inspection_state_conflict");
+    }
+
+    expect(dispatcher.messages).toEqual([]);
+  });
+
+  it("leaves a retried generation committed and pending when dispatch fails", async () => {
+    const dispatcher = new RecordingTaskDispatcher();
+    dispatcher.fail = true;
+    const { app, token, user } = await createUploadHarness(dispatcher);
+    const fixture = await createCommandInspection(
+      user.id,
+      "failed",
+      "failed",
+      "provider_unavailable",
+    );
+
+    const response = await runInspectionCommand(
+      app,
+      token,
+      fixture.inspectionId,
+      "retry",
+    );
+
+    expect(response.status).toBe(503);
+    const [stored] = await sql<
+      {
+        dispatch_generation: number;
+        inspection_status: string;
+        prediction_object_key: string | null;
+        status: string;
+        task_enqueued_at: Date | null;
+        task_name: string | null;
+      }[]
+    >`
+      select
+        inspections.status as inspection_status,
+        inspections.prediction_object_key,
+        jobs.status,
+        jobs.dispatch_generation,
+        jobs.task_name,
+        jobs.task_enqueued_at
+      from inspections
+      inner join jobs on jobs.inspection_id = inspections.id
+      where inspections.id = ${fixture.inspectionId}
+    `;
+    expect(stored).toEqual({
+      dispatch_generation: 5,
+      inspection_status: "queued",
+      prediction_object_key: fixture.predictionObjectKey,
+      status: "pending_dispatch",
+      task_enqueued_at: null,
+      task_name: null,
+    });
+    expect(dispatcher.messages).toEqual([
+      { dispatchGeneration: 5, jobId: fixture.jobId },
+    ]);
+  });
+
+  it("hides cancellation and retry targets owned by another user", async () => {
+    const dispatcher = new RecordingTaskDispatcher();
+    const ownerHarness = await createUploadHarness(dispatcher);
+    const otherHarness = await createUploadHarness(dispatcher);
+    const cancellable = await createCommandInspection(
+      ownerHarness.user.id,
+      "queued",
+      "queued",
+    );
+    const retryable = await createCommandInspection(
+      ownerHarness.user.id,
+      "failed",
+      "failed",
+      "provider_unavailable",
+    );
+
+    const cancel = await runInspectionCommand(
+      otherHarness.app,
+      otherHarness.token,
+      cancellable.inspectionId,
+      "cancel",
+    );
+    const retry = await runInspectionCommand(
+      otherHarness.app,
+      otherHarness.token,
+      retryable.inspectionId,
+      "retry",
+    );
+
+    expect(cancel.status).toBe(404);
+    expect(cancel.body.error.code).toBe("inspection_not_found");
+    expect(retry.status).toBe(404);
+    expect(retry.body.error.code).toBe("inspection_not_found");
+    const [cancelJob] = await sql<{ cancel_requested_at: Date | null }[]>`
+      select cancel_requested_at from jobs where id = ${cancellable.jobId}
+    `;
+    const [retryJob] = await sql<
+      { dispatch_generation: number; status: string }[]
+    >`
+      select dispatch_generation, status from jobs where id = ${retryable.jobId}
+    `;
+    expect(cancelJob?.cancel_requested_at).toBeNull();
+    expect(retryJob).toEqual({ dispatch_generation: 4, status: "failed" });
+    expect(dispatcher.messages).toEqual([]);
   });
 });

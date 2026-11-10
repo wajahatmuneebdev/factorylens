@@ -14,6 +14,7 @@ import type {
   JobRecord,
   UploadCompletionRecord,
 } from "../src/db/inspection-repository.js";
+import { InspectionCommandConflictError } from "../src/db/inspection-repository.js";
 import { hashSessionToken } from "../src/session.js";
 import {
   type ObjectStorage,
@@ -229,6 +230,60 @@ class FakeInspectionRepository implements InspectionApiRepository {
         status: "queued",
         taskName,
         taskEnqueuedAt: now,
+        updatedAt: now,
+      };
+      return record;
+    },
+  );
+
+  readonly requestOwnedCancellation = vi.fn(
+    async (
+      ownerUserId: string,
+      inspectionId: string,
+    ): Promise<InspectionViewRecord | null> =>
+      this.records.find(
+        ({ inspection }) =>
+          inspection.ownerUserId === ownerUserId &&
+          inspection.id === inspectionId,
+      ) ?? null,
+  );
+
+  readonly retryOwnedFailure = vi.fn(
+    async (
+      ownerUserId: string,
+      inspectionId: string,
+      now: Date,
+    ): Promise<UploadCompletionRecord | null> => {
+      const record = this.uploads.find(
+        ({ inspection }) =>
+          inspection.ownerUserId === ownerUserId &&
+          inspection.id === inspectionId,
+      );
+      if (!record?.job) {
+        return null;
+      }
+
+      record.inspection = {
+        ...record.inspection,
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null,
+        queuedAt: now,
+        startedAt: null,
+        status: "queued",
+        updatedAt: now,
+      };
+      record.job = {
+        ...record.job,
+        attemptCount: 0,
+        dispatchGeneration: record.job.dispatchGeneration + 1,
+        errorCode: null,
+        errorMessage: null,
+        progressPercent: 0,
+        stage: null,
+        status: "pending_dispatch",
+        taskEnqueuedAt: null,
+        taskName: null,
         updatedAt: now,
       };
       return record;
@@ -664,6 +719,127 @@ describe("inspection API", () => {
     expect(repository.completeOwnedUpload).toHaveBeenCalledTimes(1);
     expect(storage.metadata).toHaveBeenCalledTimes(1);
     expect(dispatcher.dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("records an owner-scoped cancellation request and returns the current shared inspection state", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          status: "processing",
+        },
+        job: {
+          errorCode: null,
+          errorMessage: null,
+          id: "523e4567-e89b-42d3-a456-426614174000",
+          progressPercent: 45,
+          stage: "workflow",
+        },
+      },
+      {
+        inspection: inspectionRecord(secondInspectionId, otherOwnerId),
+        job: null,
+      },
+    ];
+    const app = inspectionApp(repository);
+
+    const allowed = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/cancel`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+    const hidden = await authenticated(
+      request(app)
+        .post(`/api/inspections/${secondInspectionId}/cancel`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.inspection).toMatchObject({
+      id: firstInspectionId,
+      status: "processing",
+      progress: { stage: "workflow", percent: 45 },
+    });
+    expect(hidden.status).toBe(404);
+    expect(repository.requestOwnedCancellation).toHaveBeenCalledWith(
+      owner.id,
+      firstInspectionId,
+      currentTime,
+    );
+  });
+
+  it("retries a failure with a new generation and dispatches only after the reset", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.uploads = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          errorCode: "provider_unavailable",
+          errorMessage: "The provider was unavailable.",
+          status: "failed",
+        },
+        job: {
+          ...jobRecord(),
+          attemptCount: 3,
+          dispatchGeneration: 4,
+          errorCode: "provider_unavailable",
+          errorMessage: "The provider was unavailable.",
+          status: "failed",
+          taskEnqueuedAt: new Date("2026-11-09T07:00:00.000Z"),
+          taskName: "process-old-generation",
+        },
+      },
+    ];
+    const dispatcher = new FakeTaskDispatcher();
+
+    const response = await authenticated(
+      request(inspectionApp(repository, new FakeStorage(), dispatcher))
+        .post(`/api/inspections/${firstInspectionId}/retry`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(response.status).toBe(200);
+    expect(response.body.inspection).toMatchObject({
+      id: firstInspectionId,
+      status: "queued",
+      error: null,
+      progress: { stage: null, percent: 0 },
+    });
+    expect(dispatcher.dispatch).toHaveBeenCalledWith({
+      dispatchGeneration: 5,
+      jobId: "523e4567-e89b-42d3-a456-426614174000",
+    });
+    expect(
+      repository.retryOwnedFailure.mock.invocationCallOrder[0],
+    ).toBeLessThan(dispatcher.dispatch.mock.invocationCallOrder[0]!);
+  });
+
+  it("returns stable conflicts for disallowed cancellation and retry commands", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.requestOwnedCancellation.mockRejectedValueOnce(
+      new InspectionCommandConflictError("completed"),
+    );
+    repository.retryOwnedFailure.mockRejectedValueOnce(
+      new InspectionCommandConflictError("failed"),
+    );
+    const app = inspectionApp(repository);
+
+    const cancel = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/cancel`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+    const retry = await authenticated(
+      request(app)
+        .post(`/api/inspections/${firstInspectionId}/retry`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(cancel.status).toBe(409);
+    expect(cancel.body.error.code).toBe("inspection_state_conflict");
+    expect(retry.status).toBe(409);
+    expect(retry.body.error.code).toBe("inspection_state_conflict");
   });
 
   it("emits and validates an opaque stable pagination cursor", async () => {
