@@ -5,6 +5,7 @@ import math
 import os
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
@@ -13,13 +14,21 @@ from pathlib import Path
 from typing import BinaryIO, Literal, Protocol, cast
 from uuid import UUID
 
-from factorylens_worker.storage import ObjectStorage, source_object_key
+from factorylens_worker.storage import (
+    ObjectStorage,
+    processing_object_keys,
+    source_object_key,
+)
 
 DEFAULT_MAX_SIZE_BYTES = 250 * 1024 * 1024
 DEFAULT_MAX_DURATION_MS = 5 * 60 * 1000
 DEFAULT_MAX_WIDTH = 1920
 DEFAULT_MAX_HEIGHT = 1080
 DEFAULT_FFPROBE_TIMEOUT_SECONDS = 15.0
+DEFAULT_FFMPEG_TIMEOUT_SECONDS = 10 * 60.0
+DEFAULT_FFMPEG_THREADS = 2
+FFMPEG_CANCELLATION_POLL_SECONDS = 0.25
+MAX_FFMPEG_DIAGNOSTIC_CHARACTERS = 8 * 1024
 
 MediaErrorCode = Literal[
     "invalid_media",
@@ -42,7 +51,7 @@ class MediaValidationError(Exception):
 
 
 class MediaValidationCancelled(Exception):
-    """Cancellation observed before invoking ffprobe."""
+    """Cancellation observed at a media-processing stage boundary."""
 
     code: Literal["inspection_cancelled"] = "inspection_cancelled"
     category: Literal["cancelled"] = "cancelled"
@@ -51,6 +60,16 @@ class MediaValidationCancelled(Exception):
 
 class MediaMetadataPersistenceError(RuntimeError):
     """The current lease could not persist inspected media metadata."""
+
+
+class MediaNormalizationError(MediaValidationError):
+    """A stable terminal failure while converting unsupported source media."""
+
+    diagnostic: str
+
+    def __init__(self, safe_message: str, diagnostic: str = "") -> None:
+        super().__init__("unsupported_media", safe_message)
+        self.diagnostic = diagnostic[-MAX_FFMPEG_DIAGNOSTIC_CHARACTERS:]
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +143,20 @@ class MediaMetadataStore(Protocol):
         job_id: UUID,
         lease_token: UUID,
         metadata: InspectedMediaMetadata,
+        normalized_object_key: str | None,
     ) -> bool: ...
+
+
+class NormalizationRunner(Protocol):
+    def normalize(
+        self,
+        source_path: Path,
+        destination_path: Path,
+        *,
+        timeout_seconds: float,
+        max_output_size_bytes: int,
+        is_cancelled: Callable[[], bool],
+    ) -> None: ...
 
 
 class FfprobeRunner:
@@ -179,6 +211,110 @@ class FfprobeRunner:
         return cast(dict[str, object], payload)
 
 
+class FfmpegRunner:
+    def __init__(
+        self,
+        executable: str = "ffmpeg",
+        *,
+        threads: int = DEFAULT_FFMPEG_THREADS,
+    ) -> None:
+        if not executable:
+            raise ValueError("ffmpeg executable must not be empty")
+        if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+            raise ValueError("ffmpeg threads must be a positive integer")
+        self._executable = executable
+        self._threads = threads
+
+    def normalize(
+        self,
+        source_path: Path,
+        destination_path: Path,
+        *,
+        timeout_seconds: float,
+        max_output_size_bytes: int,
+        is_cancelled: Callable[[], bool],
+    ) -> None:
+        arguments = [
+            self._executable,
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-map_metadata",
+            "-1",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-threads",
+            str(self._threads),
+            "-filter_threads",
+            str(self._threads),
+            "-filter_complex_threads",
+            str(self._threads),
+            "-max_muxing_queue_size",
+            "1024",
+            "-fs",
+            str(max_output_size_bytes),
+            str(destination_path),
+        ]
+        try:
+            process = subprocess.Popen(
+                arguments,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except OSError as error:
+            raise RuntimeError("FFmpeg could not be started") from error
+
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            if is_cancelled():
+                process.kill()
+                process.communicate()
+                raise MediaValidationCancelled()
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                process.kill()
+                _, diagnostic = process.communicate()
+                raise MediaNormalizationError(
+                    "Media normalization exceeded the allowed time.",
+                    diagnostic or "",
+                )
+            try:
+                _, diagnostic = process.communicate(
+                    timeout=min(FFMPEG_CANCELLATION_POLL_SECONDS, remaining_seconds)
+                )
+                break
+            except subprocess.TimeoutExpired:
+                continue
+
+        if process.returncode != 0:
+            raise MediaNormalizationError(
+                "The uploaded media could not be converted to a supported format.",
+                diagnostic or "",
+            )
+
+
 class MediaValidationStage:
     def __init__(
         self,
@@ -187,16 +323,22 @@ class MediaValidationStage:
         *,
         limits: MediaLimits | None = None,
         probe_runner: ProbeRunner | None = None,
+        normalization_runner: NormalizationRunner | None = None,
         ffprobe_timeout_seconds: float = DEFAULT_FFPROBE_TIMEOUT_SECONDS,
+        ffmpeg_timeout_seconds: float = DEFAULT_FFMPEG_TIMEOUT_SECONDS,
         temporary_directory: Path | None = None,
     ) -> None:
         if not math.isfinite(ffprobe_timeout_seconds) or ffprobe_timeout_seconds <= 0:
             raise ValueError("ffprobe timeout must be a positive finite number")
+        if not math.isfinite(ffmpeg_timeout_seconds) or ffmpeg_timeout_seconds <= 0:
+            raise ValueError("ffmpeg timeout must be a positive finite number")
         self._storage = storage
         self._metadata_store = metadata_store
         self._limits = limits or MediaLimits()
         self._probe_runner = probe_runner or FfprobeRunner()
+        self._normalization_runner = normalization_runner or FfmpegRunner()
         self._ffprobe_timeout_seconds = ffprobe_timeout_seconds
+        self._ffmpeg_timeout_seconds = ffmpeg_timeout_seconds
         self._temporary_directory = temporary_directory
 
     def run(
@@ -204,6 +346,7 @@ class MediaValidationStage:
         *,
         job_id: UUID,
         inspection_id: UUID,
+        dispatch_generation: int,
         lease_token: UUID,
         is_cancelled: Callable[[], bool] = lambda: False,
     ) -> InspectedMediaMetadata:
@@ -214,32 +357,80 @@ class MediaValidationStage:
         object_metadata = self._storage.metadata(source_key)
         self._enforce_size(object_metadata.size_bytes)
 
-        with tempfile.TemporaryDirectory(
-            dir=self._temporary_directory,
-            prefix="factorylens-media-",
-        ) as directory:
-            source_path = Path(directory) / "source"
-            with self._storage.read(source_key) as source:
-                downloaded_size = _copy_bounded(
-                    source, source_path, self._limits.max_size_bytes
+        normalized_key: str | None = None
+        normalization_upload_attempted = False
+        media_recorded = False
+        try:
+            with tempfile.TemporaryDirectory(
+                dir=self._temporary_directory,
+                prefix="factorylens-media-",
+            ) as directory:
+                source_path = Path(directory) / "source"
+                with self._storage.read(source_key) as source:
+                    downloaded_size = _copy_bounded(
+                        source, source_path, self._limits.max_size_bytes
+                    )
+                self._enforce_size(downloaded_size)
+
+                self._raise_if_cancelled(is_cancelled)
+                probe = self._probe_runner.probe(
+                    source_path, self._ffprobe_timeout_seconds
                 )
-            self._enforce_size(downloaded_size)
+                metadata = parse_and_validate_probe(
+                    probe,
+                    size_bytes=downloaded_size,
+                    limits=self._limits,
+                )
 
-            if is_cancelled():
-                raise MediaValidationCancelled()
+                if not is_playback_compatible(metadata):
+                    normalized_key = processing_object_keys(
+                        inspection_id, dispatch_generation
+                    ).normalized
+                    normalized_path = Path(directory) / "normalized.mp4"
+                    self._raise_if_cancelled(is_cancelled)
+                    self._normalization_runner.normalize(
+                        source_path,
+                        normalized_path,
+                        timeout_seconds=self._ffmpeg_timeout_seconds,
+                        max_output_size_bytes=self._limits.max_size_bytes,
+                        is_cancelled=is_cancelled,
+                    )
+                    self._raise_if_cancelled(is_cancelled)
+                    normalized_size = normalized_path.stat().st_size
+                    self._enforce_size(normalized_size)
+                    normalized_probe = self._probe_runner.probe(
+                        normalized_path, self._ffprobe_timeout_seconds
+                    )
+                    normalized_metadata = parse_and_validate_probe(
+                        normalized_probe,
+                        size_bytes=normalized_size,
+                        limits=self._limits,
+                    )
+                    if not is_playback_compatible(normalized_metadata):
+                        raise MediaNormalizationError(
+                            "Media normalization produced an unsupported format."
+                        )
+                    self._raise_if_cancelled(is_cancelled)
+                    normalization_upload_attempted = True
+                    with normalized_path.open("rb") as normalized:
+                        self._storage.put(normalized_key, normalized)
+                    self._raise_if_cancelled(is_cancelled)
 
-            probe = self._probe_runner.probe(source_path, self._ffprobe_timeout_seconds)
-            metadata = parse_and_validate_probe(
-                probe,
-                size_bytes=downloaded_size,
-                limits=self._limits,
-            )
-
-        if not self._metadata_store.record(job_id, lease_token, metadata):
-            raise MediaMetadataPersistenceError(
-                "The inspected media metadata was rejected by the active lease"
-            )
-        return metadata
+            if not self._metadata_store.record(
+                job_id, lease_token, metadata, normalized_key
+            ):
+                raise MediaMetadataPersistenceError(
+                    "The inspected media metadata was rejected by the active lease"
+                )
+            media_recorded = True
+            return metadata
+        finally:
+            if (
+                normalized_key is not None
+                and normalization_upload_attempted
+                and not media_recorded
+            ):
+                self._storage.delete(normalized_key)
 
     def _enforce_size(self, size_bytes: int) -> None:
         if size_bytes <= 0:
@@ -251,6 +442,33 @@ class MediaValidationStage:
                 "media_limit_exceeded",
                 "The uploaded media exceeds the configured size limit.",
             )
+
+    @staticmethod
+    def _raise_if_cancelled(is_cancelled: Callable[[], bool]) -> None:
+        if is_cancelled():
+            raise MediaValidationCancelled()
+
+
+def is_playback_compatible(metadata: InspectedMediaMetadata) -> bool:
+    """Return whether inspected codecs can be used without normalization.
+
+    FactoryLens passes through WebM containing VP8/VP9 and optional Opus/Vorbis
+    audio, or MP4-family media containing H.264 and optional AAC audio. All
+    other valid input is normalized to H.264/AAC MP4.
+    """
+
+    video = next(stream for stream in metadata.streams if stream.type == "video")
+    audio = next(
+        (stream for stream in metadata.streams if stream.type == "audio"), None
+    )
+    containers = set(metadata.container.split(","))
+    if "webm" in containers:
+        return video.codec in {"vp8", "vp9"} and (
+            audio is None or audio.codec in {"opus", "vorbis"}
+        )
+    if containers.intersection({"mov", "mp4", "m4a", "3gp", "3g2", "mj2"}):
+        return video.codec == "h264" and (audio is None or audio.codec == "aac")
+    return False
 
 
 def parse_and_validate_probe(
