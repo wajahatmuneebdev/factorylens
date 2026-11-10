@@ -29,7 +29,7 @@ FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
 authorization, worker processing, and result investigation are not connected
-yet.
+yet. Owner-scoped cancellation and retry commands are also connected.
 
 ## Development
 

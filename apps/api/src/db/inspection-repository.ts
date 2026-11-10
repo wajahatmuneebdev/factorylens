@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
+import { ERROR_DEFINITIONS, ErrorCodeSchema } from "@factorylens/contracts";
+
 import * as schema from "./schema.js";
 
 export type InspectionRecord = typeof schema.inspections.$inferSelect;
@@ -35,6 +37,13 @@ export class InspectionStateConflictError extends Error {
   constructor(readonly status: InspectionStatus) {
     super(`Inspection cannot complete upload from status ${status}`);
     this.name = "InspectionStateConflictError";
+  }
+}
+
+export class InspectionCommandConflictError extends Error {
+  constructor(readonly status: InspectionStatus) {
+    super(`Inspection command is not allowed from status ${status}`);
+    this.name = "InspectionCommandConflictError";
   }
 }
 
@@ -98,6 +107,16 @@ export interface InspectionApiRepository extends OwnerScopedInspectionRepository
     ownerUserId: string,
     options: ListOwnedInspectionsOptions,
   ): Promise<InspectionPage>;
+  requestOwnedCancellation(
+    ownerUserId: string,
+    inspectionId: string,
+    now: Date,
+  ): Promise<InspectionViewRecord | null>;
+  retryOwnedFailure(
+    ownerUserId: string,
+    inspectionId: string,
+    now: Date,
+  ): Promise<UploadCompletionRecord | null>;
   markOwnedJobDispatched(
     ownerUserId: string,
     inspectionId: string,
@@ -305,6 +324,240 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
       hasMore: records.length > options.limit,
       inspections: records.slice(0, options.limit),
     };
+  }
+
+  async requestOwnedCancellation(
+    ownerUserId: string,
+    inspectionId: string,
+    now: Date,
+  ): Promise<InspectionViewRecord | null> {
+    return this.database.transaction(async (transaction) => {
+      const [inspection] = await transaction
+        .select()
+        .from(schema.inspections)
+        .where(
+          and(
+            eq(schema.inspections.id, inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!inspection) {
+        return null;
+      }
+      if (inspection.status === "cancelled") {
+        const [job] = await transaction
+          .select({
+            id: schema.jobs.id,
+            errorCode: schema.jobs.errorCode,
+            errorMessage: schema.jobs.errorMessage,
+            progressPercent: schema.jobs.progressPercent,
+            stage: schema.jobs.stage,
+          })
+          .from(schema.jobs)
+          .innerJoin(
+            schema.inspections,
+            and(
+              eq(schema.inspections.id, schema.jobs.inspectionId),
+              eq(schema.inspections.ownerUserId, ownerUserId),
+            ),
+          )
+          .where(eq(schema.jobs.inspectionId, inspectionId))
+          .limit(1);
+
+        return { inspection, job: job ?? null };
+      }
+      if (
+        inspection.status !== "queued" &&
+        inspection.status !== "processing"
+      ) {
+        throw new InspectionCommandConflictError(inspection.status);
+      }
+
+      const [job] = await transaction
+        .select({ id: schema.jobs.id })
+        .from(schema.jobs)
+        .innerJoin(
+          schema.inspections,
+          and(
+            eq(schema.inspections.id, schema.jobs.inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .where(eq(schema.jobs.inspectionId, inspectionId))
+        .limit(1)
+        .for("update", { of: schema.jobs });
+      if (!job) {
+        throw new Error("Cancellable inspection has no durable job");
+      }
+
+      await transaction
+        .update(schema.jobs)
+        .set({ cancelRequestedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(schema.jobs.id, job.id),
+            isNull(schema.jobs.cancelRequestedAt),
+            inArray(
+              schema.jobs.inspectionId,
+              transaction
+                .select({ id: schema.inspections.id })
+                .from(schema.inspections)
+                .where(
+                  and(
+                    eq(schema.inspections.id, inspectionId),
+                    eq(schema.inspections.ownerUserId, ownerUserId),
+                  ),
+                ),
+            ),
+          ),
+        );
+
+      const [updatedJob] = await transaction
+        .select({
+          id: schema.jobs.id,
+          errorCode: schema.jobs.errorCode,
+          errorMessage: schema.jobs.errorMessage,
+          progressPercent: schema.jobs.progressPercent,
+          stage: schema.jobs.stage,
+        })
+        .from(schema.jobs)
+        .innerJoin(
+          schema.inspections,
+          and(
+            eq(schema.inspections.id, schema.jobs.inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .where(eq(schema.jobs.id, job.id))
+        .limit(1);
+
+      return { inspection, job: updatedJob ?? null };
+    });
+  }
+
+  async retryOwnedFailure(
+    ownerUserId: string,
+    inspectionId: string,
+    now: Date,
+  ): Promise<UploadCompletionRecord | null> {
+    return this.database.transaction(async (transaction) => {
+      const [inspection] = await transaction
+        .select()
+        .from(schema.inspections)
+        .where(
+          and(
+            eq(schema.inspections.id, inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (!inspection) {
+        return null;
+      }
+      if (inspection.status !== "failed") {
+        throw new InspectionCommandConflictError(inspection.status);
+      }
+
+      const [job] = await transaction
+        .select({ job: schema.jobs })
+        .from(schema.jobs)
+        .innerJoin(
+          schema.inspections,
+          and(
+            eq(schema.inspections.id, schema.jobs.inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+          ),
+        )
+        .where(eq(schema.jobs.inspectionId, inspectionId))
+        .limit(1)
+        .for("update", { of: schema.jobs });
+
+      const errorCode = ErrorCodeSchema.safeParse(
+        inspection.errorCode ?? job?.job.errorCode,
+      );
+      if (
+        !job ||
+        job.job.status !== "failed" ||
+        !errorCode.success ||
+        ERROR_DEFINITIONS[errorCode.data] !== "retryable"
+      ) {
+        throw new InspectionCommandConflictError(inspection.status);
+      }
+
+      const [queuedInspection] = await transaction
+        .update(schema.inspections)
+        .set({
+          completedAt: null,
+          errorCode: null,
+          errorMessage: null,
+          queuedAt: now,
+          startedAt: null,
+          status: "queued",
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.inspections.id, inspectionId),
+            eq(schema.inspections.ownerUserId, ownerUserId),
+            eq(schema.inspections.status, "failed"),
+          ),
+        )
+        .returning();
+      if (!queuedInspection) {
+        throw new InspectionCommandConflictError(inspection.status);
+      }
+
+      const [pendingJob] = await transaction
+        .update(schema.jobs)
+        .set({
+          attemptCount: 0,
+          availableAt: now,
+          cancelRequestedAt: null,
+          dispatchGeneration: job.job.dispatchGeneration + 1,
+          errorCode: null,
+          errorMessage: null,
+          finishedAt: null,
+          heartbeatAt: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          progressPercent: 0,
+          stage: null,
+          startedAt: null,
+          status: "pending_dispatch",
+          taskEnqueuedAt: null,
+          taskName: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.jobs.id, job.job.id),
+            eq(schema.jobs.status, "failed"),
+            inArray(
+              schema.jobs.inspectionId,
+              transaction
+                .select({ id: schema.inspections.id })
+                .from(schema.inspections)
+                .where(
+                  and(
+                    eq(schema.inspections.id, inspectionId),
+                    eq(schema.inspections.ownerUserId, ownerUserId),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .returning();
+      if (!pendingJob) {
+        throw new InspectionCommandConflictError(inspection.status);
+      }
+
+      return { inspection: queuedInspection, job: pendingJob };
+    });
   }
 
   async markOwnedJobDispatched(
