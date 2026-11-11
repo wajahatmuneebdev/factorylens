@@ -32,13 +32,16 @@ compatible self-hosted Inference endpoint. Its bounded media-validation stage
 now inspects source bytes with ffprobe, passes compatible media through, and
 uses bounded FFmpeg normalization only for incompatible input. The worker can
 also build deterministic gzip prediction artifacts and atomically commit their
-small summaries under the current job lease. Google sign-in,
+small summaries under the current job lease. Its task endpoint now runs the
+full media, Workflow, and artifact pipeline inside the durable delivery,
+publishes lease-protected progress and heartbeats, observes cancellation, and
+applies bounded retries without repeating completed work. Google sign-in,
 FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
-authorization and private artifact access are connected. Worker processing and
-the result-investigation interface are not fully orchestrated yet. Owner-scoped
-cancellation and retry commands are also connected.
+authorization and private artifact access are connected. The
+result-investigation interface is not connected yet. Owner-scoped cancellation
+and retry commands are also connected.
 
 ## Development
 
@@ -61,8 +64,8 @@ time with `npm run dev:web`, `npm run dev:api`, or `npm run dev:worker`.
 | Express API   | `http://127.0.0.1:3000/health` | Returns a JSON health response   |
 | Python worker | `http://127.0.0.1:8000/health` | Health and internal task leasing |
 
-The API and worker require PostgreSQL. The API also requires Google OIDC
-credentials, private R2 bucket credentials scoped to that bucket, its public
+The API and worker require PostgreSQL and private R2 bucket credentials scoped
+to that bucket. The API also requires Google OIDC credentials, its public
 application origin, and a high-entropy auth cookie secret. The credential-free
 `.env.example` files document the required names, optional host and port
 overrides, the worker's fixture Workflow endpoint, and the opt-in Roboflow
@@ -79,6 +82,14 @@ variable described below is required only for its opt-in integration test. Set
 `npm run configure:tasks --workspace @factorylens/api` with deployment
 credentials to apply the configured rate, concurrency, and retry limits to an
 already-provisioned queue.
+
+Worker progress uses stable stage names: `validating_media` begins at 5%,
+`running_workflow` begins at 30% and advances to 90%, `writing_artifact` begins
+at 95%, and the atomic result commit records `completed` at 100%. Heartbeats
+renew the current lease without advancing progress. A cancellation or lost
+lease stops later stage commits; transient provider or storage failures enter
+bounded `retry_wait`, while terminal media failures and exhausted attempts are
+acknowledged after their safe failure is persisted.
 
 The root commands apply consistently across the npm and uv workspaces:
 
