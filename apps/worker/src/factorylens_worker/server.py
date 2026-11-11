@@ -9,9 +9,29 @@ from pydantic import ValidationError
 
 from factorylens_worker.contracts import ProcessTaskMessage
 from factorylens_worker.job_lease import (
+    JobLease,
     LeaseDecision,
     LeaseOutcome,
     PostgresJobLeaseStore,
+)
+from factorylens_worker.media_validation import MediaValidationStage
+from factorylens_worker.media_validation_store import PostgresMediaMetadataStore
+from factorylens_worker.prediction_artifact import PredictionArtifactStage
+from factorylens_worker.prediction_artifact_store import (
+    PostgresInspectionCompletionStore,
+)
+from factorylens_worker.processing_pipeline import (
+    FfmpegFrameSampler,
+    InspectionProcessingPipeline,
+)
+from factorylens_worker.storage import R2ObjectStorage
+from factorylens_worker.task_execution import (
+    TaskExecutionOutcome,
+    TaskExecutor,
+)
+from factorylens_worker.workflow import (
+    create_workflow_runner,
+    workflow_configuration_from_environment,
 )
 
 MAX_TASK_BODY_BYTES = 16 * 1024
@@ -22,8 +42,13 @@ class JobLeaseStore(Protocol):
     def acquire(self, message: ProcessTaskMessage) -> LeaseDecision: ...
 
 
+class JobExecutor(Protocol):
+    def execute(self, lease: JobLease) -> TaskExecutionOutcome: ...
+
+
 class WorkerServer(ThreadingHTTPServer):
     lease_store: JobLeaseStore
+    executor: JobExecutor
 
 
 def json_payload(value: object) -> bytes:
@@ -72,7 +97,31 @@ class WorkerHandler(BaseHTTPRequestHandler):
             return
 
         if decision.outcome is LeaseOutcome.ACQUIRED:
-            self._send_json(HTTPStatus.ACCEPTED, json_payload({"outcome": "acquired"}))
+            if decision.lease is None:
+                logger.error("Acquired task decision did not include a lease")
+                self._send_error_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE, "lease_unavailable"
+                )
+                return
+            try:
+                execution = self._worker_server.executor.execute(decision.lease)
+            except Exception:
+                logger.exception(
+                    "Task execution stopped before recording an outcome",
+                    extra={"job_id": str(decision.lease.job_id)},
+                )
+                self._send_error_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE, "processing_interrupted"
+                )
+                return
+            if execution is TaskExecutionOutcome.RETRY:
+                self._send_error_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "processing_retry_scheduled",
+                    extra_headers={"Retry-After": "10"},
+                )
+                return
+            self._send_empty(HTTPStatus.NO_CONTENT)
             return
         if decision.outcome is LeaseOutcome.TERMINAL:
             self._send_empty(HTTPStatus.NO_CONTENT)
@@ -160,8 +209,47 @@ def main() -> None:
     if database_url is None:
         raise RuntimeError("DATABASE_URL is required")
 
+    required_r2_values = {
+        name: os.environ.get(name)
+        for name in (
+            "R2_ACCESS_KEY_ID",
+            "R2_ACCOUNT_ID",
+            "R2_BUCKET",
+            "R2_SECRET_ACCESS_KEY",
+        )
+    }
+    missing_r2_values = [
+        name for name, value in required_r2_values.items() if not value
+    ]
+    if missing_r2_values:
+        raise RuntimeError(f"{', '.join(missing_r2_values)} are required")
+
+    storage = R2ObjectStorage(
+        account_id=required_r2_values["R2_ACCOUNT_ID"] or "",
+        access_key_id=required_r2_values["R2_ACCESS_KEY_ID"] or "",
+        secret_access_key=required_r2_values["R2_SECRET_ACCESS_KEY"] or "",
+        bucket=required_r2_values["R2_BUCKET"] or "",
+    )
+    workflow_configuration = workflow_configuration_from_environment()
+    lease_store = PostgresJobLeaseStore(database_url)
+    pipeline = InspectionProcessingPipeline(
+        storage=storage,
+        media_stage=MediaValidationStage(
+            storage,
+            PostgresMediaMetadataStore(database_url),
+        ),
+        frame_sampler=FfmpegFrameSampler(),
+        workflow_runner=create_workflow_runner(workflow_configuration),
+        workflow_configuration=workflow_configuration,
+        artifact_stage=PredictionArtifactStage(
+            storage,
+            PostgresInspectionCompletionStore(database_url),
+        ),
+    )
+
     server = WorkerServer((host, port), WorkerHandler)
-    server.lease_store = PostgresJobLeaseStore(database_url)
+    server.lease_store = lease_store
+    server.executor = TaskExecutor(lease_store, pipeline)
     print(f"FactoryLens worker listening on http://{host}:{port}")
 
     try:

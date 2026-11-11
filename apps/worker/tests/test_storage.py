@@ -2,15 +2,20 @@ import json
 from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import UUID
 
 import pytest
+from boto3.exceptions import S3UploadFailedError  # type: ignore[import-untyped]
+from botocore.exceptions import EndpointConnectionError  # type: ignore[import-untyped]
 
 from factorylens_worker.storage import (
     InvalidStorageObjectKeyError,
     LocalFilesystemStorage,
+    R2ObjectStorage,
+    StorageObjectMetadata,
     StorageObjectNotFoundError,
+    StorageUnavailableError,
     processing_object_keys,
     source_object_key,
 )
@@ -111,3 +116,87 @@ def test_failed_replacement_preserves_the_previous_object(tmp_path: Path) -> Non
         assert stored.read() == initial
     stored_directory = tmp_path.joinpath(*key.split("/")[:-1])
     assert [path.name for path in stored_directory.iterdir()] == ["source"]
+
+
+class FakeR2Client:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def upload_fileobj(self, source: BinaryIO, bucket: str, key: str) -> None:
+        del bucket
+        self.objects[key] = source.read()
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket
+        return {"Body": BytesIO(self.objects[Key])}
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket
+        return {"ContentLength": len(self.objects[Key])}
+
+    def delete_object(self, *, Bucket: str, Key: str) -> None:
+        del Bucket
+        self.objects.pop(Key, None)
+
+
+def test_r2_storage_uses_private_s3_object_operations() -> None:
+    fixture = load_fixture()
+    client = FakeR2Client()
+    storage = R2ObjectStorage(
+        account_id="a" * 32,
+        access_key_id="access",
+        secret_access_key="secret",
+        bucket="private",
+        client=client,
+    )
+    key = fixture["keys"]["source"]
+
+    metadata = storage.put(key, BytesIO(b"video"))
+
+    assert metadata == StorageObjectMetadata(key=key, size_bytes=5)
+    assert storage.exists(key)
+    with storage.read(key) as stored:
+        assert stored.read() == b"video"
+    storage.delete(key)
+    assert client.objects == {}
+
+
+class UnavailableR2Client(FakeR2Client):
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        del Bucket, Key
+        raise EndpointConnectionError(endpoint_url="https://r2.example.test")
+
+
+def test_r2_transport_errors_are_normalized_for_retry_classification() -> None:
+    storage = R2ObjectStorage(
+        account_id="a" * 32,
+        access_key_id="access",
+        secret_access_key="secret",
+        bucket="private",
+        client=UnavailableR2Client(),
+    )
+
+    with pytest.raises(StorageUnavailableError):
+        storage.metadata("inspections/00000000-0000-0000-0000-000000000000/source")
+
+
+class FailingR2UploadClient(FakeR2Client):
+    def upload_fileobj(self, source: BinaryIO, bucket: str, key: str) -> None:
+        del source, bucket, key
+        raise S3UploadFailedError("simulated upload failure")
+
+
+def test_r2_transfer_errors_are_normalized_for_retry_classification() -> None:
+    storage = R2ObjectStorage(
+        account_id="a" * 32,
+        access_key_id="access",
+        secret_access_key="secret",
+        bucket="private",
+        client=FailingR2UploadClient(),
+    )
+
+    with pytest.raises(StorageUnavailableError):
+        storage.put(
+            "inspections/00000000-0000-0000-0000-000000000000/source",
+            BytesIO(b"video"),
+        )

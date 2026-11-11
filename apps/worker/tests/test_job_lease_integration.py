@@ -8,7 +8,13 @@ import psycopg
 import pytest
 
 from factorylens_worker.contracts import ProcessTaskMessage
-from factorylens_worker.job_lease import LeaseOutcome, PostgresJobLeaseStore
+from factorylens_worker.job_lease import (
+    CheckpointOutcome,
+    FailureOutcome,
+    JobFailure,
+    LeaseOutcome,
+    PostgresJobLeaseStore,
+)
 from factorylens_worker.media_validation import (
     InspectedMediaMetadata,
     MediaStreamMetadata,
@@ -114,6 +120,123 @@ def test_progress_requires_the_current_lease_token(queued_job: UUID) -> None:
 
     assert not store.record_progress(queued_job, uuid4(), "download", 10)
     assert store.record_progress(queued_job, decision.lease.token, "download", 10)
+
+
+def test_cancellation_checkpoint_atomically_finishes_both_states(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    store = PostgresJobLeaseStore(database_url)
+    lease = store.acquire(
+        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    ).lease
+    assert lease is not None
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "update jobs set cancel_requested_at = now() where id = %s",
+            (queued_job,),
+        )
+
+    outcome = store.checkpoint(lease, "running_workflow", 40)
+
+    assert outcome is CheckpointOutcome.CANCELLED
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select job.status, job.lease_token, job.error_code, inspection.status,
+                   inspection.error_code
+            from jobs as job
+            join inspections as inspection on inspection.id = job.inspection_id
+            where job.id = %s
+            """,
+            (queued_job,),
+        ).fetchone()
+    assert row == (
+        "cancelled",
+        None,
+        "inspection_cancelled",
+        "cancelled",
+        "inspection_cancelled",
+    )
+
+
+def test_terminal_input_failure_is_persisted_without_retry(queued_job: UUID) -> None:
+    assert database_url is not None
+    store = PostgresJobLeaseStore(database_url)
+    lease = store.acquire(
+        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    ).lease
+    assert lease is not None
+
+    outcome = store.record_failure(
+        lease,
+        JobFailure("invalid_media", "The media is invalid.", retryable=False),
+    )
+
+    assert outcome is FailureOutcome.TERMINAL
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select job.status, job.error_code, inspection.status,
+                   inspection.error_code
+            from jobs as job
+            join inspections as inspection on inspection.id = job.inspection_id
+            where job.id = %s
+            """,
+            (queued_job,),
+        ).fetchone()
+    assert row == ("failed", "invalid_media", "failed", "invalid_media")
+
+
+def test_transient_failures_retry_then_exhaust_the_attempt_limit(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    store = PostgresJobLeaseStore(database_url, retry_base_seconds=1)
+    message = ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    failure = JobFailure(
+        "provider_unavailable",
+        "The provider is temporarily unavailable.",
+        retryable=True,
+    )
+
+    for expected_attempt in (1, 2, 3):
+        lease = store.acquire(message).lease
+        assert lease is not None
+        assert lease.attempt_count == expected_attempt
+        outcome = store.record_failure(lease, failure)
+        if expected_attempt < 3:
+            assert outcome is FailureOutcome.RETRY
+            with psycopg.connect(database_url) as connection:
+                row = connection.execute(
+                    "select status, error_code from jobs where id = %s",
+                    (queued_job,),
+                ).fetchone()
+                assert row == ("retry_wait", "provider_unavailable")
+                connection.execute(
+                    "update jobs set available_at = now() where id = %s",
+                    (queued_job,),
+                )
+        else:
+            assert outcome is FailureOutcome.TERMINAL
+
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select job.status, job.error_code, inspection.status,
+                   inspection.error_code
+            from jobs as job
+            join inspections as inspection on inspection.id = job.inspection_id
+            where job.id = %s
+            """,
+            (queued_job,),
+        ).fetchone()
+    assert row == (
+        "failed",
+        "processing_attempts_exhausted",
+        "failed",
+        "processing_attempts_exhausted",
+    )
 
 
 def test_inspected_media_metadata_requires_the_current_lease_token(
@@ -236,6 +359,42 @@ def test_expired_lease_is_replaced_with_a_unique_token(queued_job: UUID) -> None
     assert decision.lease.token != expired_token
 
 
+def test_worker_exit_on_final_attempt_is_terminal_after_lease_expiry(
+    queued_job: UUID,
+) -> None:
+    assert database_url is not None
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "update jobs set max_attempts = 1 where id = %s", (queued_job,)
+        )
+    store = PostgresJobLeaseStore(database_url)
+    message = ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    first = store.acquire(message)
+    assert first.outcome is LeaseOutcome.ACQUIRED
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "update jobs set lease_expires_at = now() - interval '1 second' "
+            "where id = %s",
+            (queued_job,),
+        )
+
+    redelivery = store.acquire(message)
+
+    assert redelivery.outcome is LeaseOutcome.TERMINAL
+    assert redelivery.lease is None
+    with psycopg.connect(database_url) as connection:
+        row = connection.execute(
+            """
+            select job.status, job.error_code, inspection.status
+            from jobs as job
+            join inspections as inspection on inspection.id = job.inspection_id
+            where job.id = %s
+            """,
+            (queued_job,),
+        ).fetchone()
+    assert row == ("failed", "processing_attempts_exhausted", "failed")
+
+
 def test_terminal_job_is_acknowledged_even_for_an_old_generation(
     queued_job: UUID,
 ) -> None:
@@ -340,6 +499,12 @@ def test_completion_atomically_commits_the_job_and_small_inspection_summary(
         0.95,
         True,
     )
+
+    redelivery = PostgresJobLeaseStore(database_url).acquire(
+        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    )
+    assert redelivery.outcome is LeaseOutcome.TERMINAL
+    assert redelivery.lease is None
 
 
 def test_stale_lease_cannot_write_over_a_newer_attempt_or_committed_result(
