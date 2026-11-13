@@ -1,6 +1,12 @@
 import { Readable } from "node:stream";
+import { readFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 
-import type { User } from "@factorylens/contracts";
+import {
+  PREDICTION_CSV_COLUMNS,
+  PredictionArtifactV1Schema,
+  type User,
+} from "@factorylens/contracts";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
@@ -38,6 +44,26 @@ const owner: User = {
 const otherOwnerId = "223e4567-e89b-42d3-a456-426614174000";
 const firstInspectionId = "323e4567-e89b-42d3-a456-426614174000";
 const secondInspectionId = "423e4567-e89b-42d3-a456-426614174000";
+const predictionFixture = PredictionArtifactV1Schema.parse(
+  JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../fixtures/contracts/prediction-artifact-v1.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ),
+);
+
+function compressedPredictionArtifact(
+  inspectionId: string,
+  overrides: Record<string, unknown> = {},
+): Buffer {
+  return gzipSync(
+    JSON.stringify({ ...predictionFixture, inspectionId, ...overrides }),
+  );
+}
 
 function inspectionRecord(
   id: string,
@@ -600,6 +626,10 @@ describe("inspection API", () => {
       },
     ];
     const storage = new FakeStorage();
+    storage.metadata.mockImplementation(async (key) => ({
+      key,
+      sizeBytes: 4096,
+    }));
     const app = inspectionApp(repository, storage);
 
     const allowed = await authenticated(
@@ -615,6 +645,7 @@ describe("inspection API", () => {
       predictions: { expiresAt: "2026-11-09T08:10:00.000Z" },
       predictionSchemaVersion: 1,
     });
+    expect(allowed.headers["cache-control"]).toBe("private, no-store");
     expect(storage.authorizeDownload.mock.calls.map(([key]) => key)).toEqual([
       normalizedKey,
       predictionKey,
@@ -623,15 +654,52 @@ describe("inspection API", () => {
     expect(storage.authorizeDownload).toHaveBeenCalledTimes(2);
   });
 
-  it("does not authorize artifacts before inspection completion", async () => {
+  it.each([
+    "awaiting_upload",
+    "queued",
+    "processing",
+    "failed",
+    "cancelled",
+  ] as const)(
+    "does not authorize artifacts for a %s inspection",
+    async (status) => {
+      const repository = new FakeInspectionRepository();
+      repository.records = [
+        {
+          inspection: {
+            ...inspectionRecord(firstInspectionId),
+            predictionObjectKey: `inspections/${firstInspectionId}/generations/1/prediction`,
+            predictionSchemaVersion: 1,
+            status,
+          },
+          job: null,
+        },
+      ];
+      const storage = new FakeStorage();
+
+      const response = await authenticated(
+        request(inspectionApp(repository, storage)).get(
+          `/api/inspections/${firstInspectionId}/artifacts`,
+        ),
+      );
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe("inspection_state_conflict");
+      expect(storage.metadata).not.toHaveBeenCalled();
+      expect(storage.authorizeDownload).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not sign artifact locations when a committed object is missing", async () => {
     const repository = new FakeInspectionRepository();
     repository.records = [
       {
         inspection: {
           ...inspectionRecord(firstInspectionId),
+          completedAt: currentTime,
           predictionObjectKey: `inspections/${firstInspectionId}/generations/1/prediction`,
           predictionSchemaVersion: 1,
-          status: "processing",
+          status: "completed",
         },
         job: null,
       },
@@ -644,9 +712,149 @@ describe("inspection API", () => {
       ),
     );
 
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("inspection_state_conflict");
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe("storage_unavailable");
     expect(storage.authorizeDownload).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unrecognized committed prediction schema before signing", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          completedAt: currentTime,
+          predictionObjectKey: `inspections/${firstInspectionId}/generations/1/prediction`,
+          predictionSchemaVersion: 2,
+          status: "completed",
+        },
+        job: null,
+      },
+    ];
+    const storage = new FakeStorage();
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage)).get(
+        `/api/inspections/${firstInspectionId}/artifacts`,
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe("storage_unavailable");
+    expect(storage.metadata).not.toHaveBeenCalled();
+    expect(storage.authorizeDownload).not.toHaveBeenCalled();
+  });
+
+  it("streams stable CSV columns from the committed prediction artifact", async () => {
+    const repository = new FakeInspectionRepository();
+    const predictionKey = `inspections/${firstInspectionId}/generations/2/prediction`;
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          completedAt: currentTime,
+          predictionObjectKey: predictionKey,
+          predictionSchemaVersion: 1,
+          status: "completed",
+        },
+        job: null,
+      },
+    ];
+    const storage = new FakeStorage();
+    storage.read.mockResolvedValue(
+      Readable.from([compressedPredictionArtifact(firstInspectionId)]),
+    );
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage)).get(
+        `/api/inspections/${firstInspectionId}/export.csv`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/csv");
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers["content-disposition"]).toBe(
+      `attachment; filename="factorylens-${firstInspectionId}.csv"`,
+    );
+    const lines = response.text.trim().split("\r\n");
+    expect(lines[0]).toBe(PREDICTION_CSV_COLUMNS.join(","));
+    expect(lines).toHaveLength(4);
+    expect(lines[1]).toBe(
+      `"${firstInspectionId}",0,"f000000-p000","NO-Hardhat",0.91,614,238,92,108`,
+    );
+    expect(storage.read).toHaveBeenCalledWith(predictionKey);
+  });
+
+  it("hides cross-owner CSV exports without reading private results", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId, otherOwnerId),
+          completedAt: currentTime,
+          predictionObjectKey: `inspections/${firstInspectionId}/generations/1/prediction`,
+          predictionSchemaVersion: 1,
+          status: "completed",
+        },
+        job: null,
+      },
+    ];
+    const storage = new FakeStorage();
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage)).get(
+        `/api/inspections/${firstInspectionId}/export.csv`,
+      ),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("inspection_not_found");
+    expect(storage.read).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing and unsupported CSV prediction artifacts", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.records = [
+      {
+        inspection: {
+          ...inspectionRecord(firstInspectionId),
+          completedAt: currentTime,
+          predictionObjectKey: `inspections/${firstInspectionId}/generations/1/prediction`,
+          predictionSchemaVersion: 1,
+          status: "completed",
+        },
+        job: null,
+      },
+    ];
+    const missingStorage = new FakeStorage();
+    missingStorage.read.mockRejectedValue(
+      new StorageObjectNotFoundError(
+        `inspections/${firstInspectionId}/generations/1/prediction`,
+      ),
+    );
+    const unsupportedStorage = new FakeStorage();
+    unsupportedStorage.read.mockResolvedValue(
+      Readable.from([
+        compressedPredictionArtifact(firstInspectionId, { schemaVersion: 2 }),
+      ]),
+    );
+
+    const missing = await authenticated(
+      request(inspectionApp(repository, missingStorage)).get(
+        `/api/inspections/${firstInspectionId}/export.csv`,
+      ),
+    );
+    const unsupported = await authenticated(
+      request(inspectionApp(repository, unsupportedStorage)).get(
+        `/api/inspections/${firstInspectionId}/export.csv`,
+      ),
+    );
+
+    expect(missing.status).toBe(503);
+    expect(missing.body.error.code).toBe("storage_unavailable");
+    expect(unsupported.status).toBe(503);
+    expect(unsupported.body.error.code).toBe("storage_unavailable");
   });
 
   it("rejects missing uploads and declared-size mismatches before creating a job", async () => {

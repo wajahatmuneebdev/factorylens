@@ -3,6 +3,18 @@ import { z } from "zod";
 const finiteNumber = z.number().finite();
 const confidence = finiteNumber.min(0).max(1);
 
+export const PREDICTION_CSV_COLUMNS = [
+  "inspection_id",
+  "timestamp_ms",
+  "prediction_id",
+  "class_name",
+  "confidence",
+  "box_x",
+  "box_y",
+  "box_width",
+  "box_height",
+] as const;
+
 export const PredictionClassSchema = z.enum([
   "Person",
   "Hardhat",

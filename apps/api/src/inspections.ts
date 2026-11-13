@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import {
   CancelInspectionRequestSchema,
   CreateInspectionRequestSchema,
   ERROR_DEFINITIONS,
   ErrorCodeSchema,
+  ExportCsvRequestSchema,
   GetArtifactsRequestSchema,
   InspectionPathParamsSchema,
   InspectionSchema,
@@ -12,6 +15,7 @@ import {
   RetryInspectionRequestSchema,
   UploadCompleteRequestSchema,
   type Inspection,
+  type PredictionArtifactV1,
   type SafeError,
 } from "@factorylens/contracts";
 import express, {
@@ -32,6 +36,10 @@ import {
   InspectionCommandConflictError,
   InspectionStateConflictError,
 } from "./db/inspection-repository.js";
+import {
+  predictionCsvRows,
+  readPredictionArtifact,
+} from "./prediction-export.js";
 import { authenticatedUser } from "./session.js";
 import {
   type ObjectAccessAuthorizer,
@@ -544,14 +552,19 @@ export function registerInspectionRoutes(
     }
 
     try {
+      const videoObjectKey =
+        inspection.normalizedObjectKey ?? inspection.sourceObjectKey;
+      await Promise.all([
+        dependencies.storage.metadata(videoObjectKey),
+        dependencies.storage.metadata(inspection.predictionObjectKey),
+      ]);
       const [video, predictions] = await Promise.all([
-        dependencies.objectAccess.authorizeDownload(
-          inspection.normalizedObjectKey ?? inspection.sourceObjectKey,
-        ),
+        dependencies.objectAccess.authorizeDownload(videoObjectKey),
         dependencies.objectAccess.authorizeDownload(
           inspection.predictionObjectKey,
         ),
       ]);
+      response.set("Cache-Control", "private, no-store");
       response.json({
         video: { ...video, expiresAt: video.expiresAt.toISOString() },
         predictions: {
@@ -566,6 +579,90 @@ export function registerInspectionRoutes(
         category: "retryable",
         message: "Inspection artifacts are temporarily unavailable.",
       });
+    }
+  });
+
+  app.get("/api/inspections/:id/export.csv", async (request, response) => {
+    const path = ExportCsvRequestSchema.safeParse(request.params);
+    if (!path.success) {
+      sendInvalidRequest(response, "The inspection identifier is invalid.");
+      return;
+    }
+
+    let record: InspectionViewRecord | null;
+    try {
+      record = await dependencies.repository.findOwnedViewById(
+        authenticatedUser(request).id,
+        path.data.id,
+      );
+    } catch {
+      sendSafeError(response, 503, {
+        code: "provider_unavailable",
+        category: "retryable",
+        message: "Inspection export is temporarily unavailable.",
+      });
+      return;
+    }
+
+    if (!record) {
+      sendSafeError(response, 404, {
+        code: "inspection_not_found",
+        category: "terminal",
+        message: "Inspection not found.",
+      });
+      return;
+    }
+
+    const { inspection } = record;
+    if (inspection.status !== "completed") {
+      sendSafeError(response, 409, {
+        code: "inspection_state_conflict",
+        category: "terminal",
+        message: "Exports are available only for completed inspections.",
+      });
+      return;
+    }
+    if (
+      !inspection.predictionObjectKey ||
+      inspection.predictionSchemaVersion !== 1
+    ) {
+      sendSafeError(response, 503, {
+        code: "storage_unavailable",
+        category: "retryable",
+        message: "Inspection export is temporarily unavailable.",
+      });
+      return;
+    }
+
+    let artifact: PredictionArtifactV1;
+    try {
+      artifact = await readPredictionArtifact(
+        dependencies.storage,
+        inspection.predictionObjectKey,
+        inspection.id,
+      );
+    } catch {
+      sendSafeError(response, 503, {
+        code: "storage_unavailable",
+        category: "retryable",
+        message: "Inspection export is temporarily unavailable.",
+      });
+      return;
+    }
+
+    response.status(200);
+    response.set({
+      "Cache-Control": "private, no-store",
+      "Content-Disposition": `attachment; filename="factorylens-${inspection.id}.csv"`,
+      "Content-Type": "text/csv; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    });
+    try {
+      await pipeline(Readable.from(predictionCsvRows(artifact)), response);
+    } catch {
+      if (!response.destroyed) {
+        response.destroy();
+      }
     }
   });
 
