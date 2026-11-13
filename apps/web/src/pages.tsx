@@ -3,14 +3,8 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { PageState } from "./components/PageState";
 import { NewInspectionForm } from "./new-inspection";
-import {
-  Badge,
-  Button,
-  Dialog,
-  Notification,
-  Progress,
-  TableFrame,
-} from "./components/ui";
+import { InspectionHistory, RecentInspections } from "./inspection-history";
+import { Badge, Button, Dialog, Notification, Progress } from "./components/ui";
 
 function PageHeader({
   action,
@@ -41,36 +35,9 @@ export function DashboardPage() {
             <span aria-hidden="true">＋</span> New inspection
           </Link>
         }
-        eyebrow="Monday, 9 November"
-        title="Good morning"
+        eyebrow="Workspace"
+        title="Inspection dashboard"
       />
-
-      <section aria-labelledby="overview-title" className="section-stack">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Overview</p>
-            <h2 id="overview-title">Inspection activity</h2>
-          </div>
-          <span className="preview-label">Interface preview</span>
-        </div>
-        <div className="metric-grid">
-          <article className="metric-card metric-card--accent">
-            <span className="metric-card__label">Ready to review</span>
-            <strong>12</strong>
-            <span className="metric-card__meta">3 added this week</span>
-          </article>
-          <article className="metric-card">
-            <span className="metric-card__label">In progress</span>
-            <strong>2</strong>
-            <span className="metric-card__meta">Processing normally</span>
-          </article>
-          <article className="metric-card">
-            <span className="metric-card__label">Needs attention</span>
-            <strong>1</strong>
-            <span className="metric-card__meta">Action may be required</span>
-          </article>
-        </div>
-      </section>
 
       <section aria-labelledby="recent-title" className="panel section-stack">
         <div className="section-heading">
@@ -82,82 +49,7 @@ export function DashboardPage() {
             View history <span aria-hidden="true">→</span>
           </Link>
         </div>
-        <TableFrame>
-          <table>
-            <caption className="sr-only">
-              Example recent inspection rows
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">Inspection</th>
-                <th scope="col">Source</th>
-                <th scope="col">Status</th>
-                <th scope="col">Updated</th>
-                <th scope="col">
-                  <span className="sr-only">Open</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <strong>Packaging line check</strong>
-                  <span className="table-subtext">42 second recording</span>
-                </td>
-                <td>Uploaded video</td>
-                <td>
-                  <Badge tone="positive">Completed</Badge>
-                </td>
-                <td>18 minutes ago</td>
-                <td>
-                  <Link
-                    aria-label="Open Packaging line check"
-                    className="table-link"
-                    to="/inspections/preview"
-                  >
-                    →
-                  </Link>
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <strong>Loading bay walkthrough</strong>
-                  <span className="table-subtext">1 minute recording</span>
-                </td>
-                <td>Browser recording</td>
-                <td>
-                  <Badge tone="info">Processing</Badge>
-                </td>
-                <td>4 minutes ago</td>
-                <td>
-                  <Link
-                    aria-label="Open Loading bay walkthrough"
-                    className="table-link"
-                    to="/inspections/preview"
-                  >
-                    →
-                  </Link>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </TableFrame>
-      </section>
-
-      <section aria-labelledby="states-title" className="section-stack">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Reusable components</p>
-            <h2 id="states-title">Page states</h2>
-          </div>
-          <p className="section-note">Generic states for every feature area</p>
-        </div>
-        <div className="state-grid">
-          <PageState kind="loading" />
-          <PageState kind="empty" />
-          <PageState kind="degraded" />
-          <PageState kind="error" />
-        </div>
+        <RecentInspections />
       </section>
     </div>
   );
@@ -238,81 +130,14 @@ export function HistoryPage() {
   return (
     <div className="page-stack">
       <PageHeader eyebrow="Archive" title="Inspection history" />
-      <div className="filter-bar">
-        <label className="search-field">
-          <span className="sr-only">Search inspection history</span>
-          <span aria-hidden="true">⌕</span>
-          <input placeholder="Search history" type="search" />
-        </label>
-        <label className="compact-field">
-          <span>Status</span>
-          <select defaultValue="all">
-            <option value="all">All statuses</option>
-            <option value="completed">Completed</option>
-            <option value="processing">Processing</option>
-            <option value="failed">Failed</option>
-          </select>
-        </label>
-      </div>
       <section
         aria-labelledby="history-table-title"
         className="panel section-stack"
       >
         <div className="section-heading">
           <h2 id="history-table-title">All inspections</h2>
-          <span className="preview-label">Sample rows</span>
         </div>
-        <TableFrame>
-          <table>
-            <caption className="sr-only">Example inspection history</caption>
-            <thead>
-              <tr>
-                <th scope="col">Name</th>
-                <th scope="col">Created</th>
-                <th scope="col">Duration</th>
-                <th scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  <Link className="text-link" to="/inspections/preview">
-                    Packaging line check
-                  </Link>
-                </td>
-                <td>9 Nov 2026</td>
-                <td>00:42</td>
-                <td>
-                  <Badge tone="positive">Completed</Badge>
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <Link className="text-link" to="/inspections/preview">
-                    Loading bay walkthrough
-                  </Link>
-                </td>
-                <td>9 Nov 2026</td>
-                <td>01:04</td>
-                <td>
-                  <Badge tone="info">Processing</Badge>
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <Link className="text-link" to="/inspections/preview">
-                    Conveyor guard review
-                  </Link>
-                </td>
-                <td>8 Nov 2026</td>
-                <td>00:31</td>
-                <td>
-                  <Badge tone="critical">Failed</Badge>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </TableFrame>
+        <InspectionHistory />
       </section>
     </div>
   );

@@ -6,15 +6,21 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AppRoutes } from "./App";
 
 function renderRoute(path: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <AppRoutes />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[path]}>
+        <AppRoutes />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -34,7 +40,7 @@ afterEach(() => {
 describe("application routes", () => {
   it.each([
     ["/sign-in", "See every moment that matters."],
-    ["/dashboard", "Good morning"],
+    ["/dashboard", "Inspection dashboard"],
     ["/inspections/new", "New inspection"],
     ["/inspections/example-id", "Packaging line check"],
     ["/history", "Inspection history"],
@@ -66,7 +72,7 @@ describe("application shell", () => {
     ).toHaveAttribute("href", "/auth/google?returnTo=/dashboard");
   });
 
-  it("provides landmarks, keyboard entry, current navigation, and generic page states", () => {
+  it("provides landmarks, keyboard entry, current navigation, and a loading state", () => {
     renderRoute("/dashboard");
 
     expect(
@@ -80,18 +86,7 @@ describe("application shell", () => {
       screen.getAllByRole("link", { name: "Dashboard" })[0],
     ).toHaveAttribute("aria-current", "page");
     expect(
-      screen.getByRole("heading", { name: "Gathering the latest view" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "A clear place to begin" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Showing what is available" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", {
-        name: "Something interrupted the request",
-      }),
+      screen.getByRole("heading", { name: "Loading recent inspections" }),
     ).toBeInTheDocument();
   });
 

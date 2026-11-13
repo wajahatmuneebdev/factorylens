@@ -11,6 +11,21 @@ export const InspectionStateSchema = z.enum([
 
 export type InspectionState = z.infer<typeof InspectionStateSchema>;
 
+export const INSPECTION_STATUS_PRESENTATION = {
+  awaiting_upload: { label: "Awaiting upload", tone: "neutral" },
+  queued: { label: "Queued", tone: "info" },
+  processing: { label: "Processing", tone: "info" },
+  completed: { label: "Completed", tone: "positive" },
+  failed: { label: "Failed", tone: "critical" },
+  cancelled: { label: "Cancelled", tone: "warning" },
+} as const satisfies Record<
+  InspectionState,
+  {
+    label: string;
+    tone: "neutral" | "positive" | "warning" | "critical" | "info";
+  }
+>;
+
 export const INSPECTION_TRANSITIONS = {
   awaiting_upload: ["queued"],
   queued: ["processing", "cancelled"],
