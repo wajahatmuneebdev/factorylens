@@ -174,16 +174,20 @@ class FakeInspectionRepository implements InspectionApiRepository {
   );
 
   readonly createOwned = vi.fn(
-    async (input: CreateOwnedInspectionInput): Promise<InspectionRecord> => ({
-      ...inspectionRecord(input.id, input.ownerUserId),
-      declaredContentType: input.declaredContentType,
-      declaredFileName: input.declaredFileName,
-      declaredSizeBytes: input.declaredSizeBytes,
-      sourceObjectKey: input.sourceObjectKey,
-      sourceType: input.sourceType,
-      title: input.title,
-      workflowKey: input.workflowKey,
-    }),
+    async (input: CreateOwnedInspectionInput): Promise<InspectionRecord> => {
+      const inspection = {
+        ...inspectionRecord(input.id, input.ownerUserId),
+        declaredContentType: input.declaredContentType,
+        declaredFileName: input.declaredFileName,
+        declaredSizeBytes: input.declaredSizeBytes,
+        sourceObjectKey: input.sourceObjectKey,
+        sourceType: input.sourceType,
+        title: input.title,
+        workflowKey: input.workflowKey,
+      };
+      this.uploads.push({ inspection, job: null });
+      return inspection;
+    },
   );
 
   readonly findOwnedById = vi.fn(
@@ -429,9 +433,13 @@ describe("inspection API", () => {
     );
   });
 
-  it("does not issue upload authorization for the prepared sample", async () => {
+  it("verifies and dispatches the prepared sample without issuing upload authorization", async () => {
     const repository = new FakeInspectionRepository();
     const storage = new FakeStorage();
+    storage.metadata.mockResolvedValue({
+      key: "samples/assembly-line-no-hard-hat.webm",
+      sizeBytes: 128_000,
+    });
 
     const response = await authenticated(
       request(inspectionApp(repository, storage))
@@ -448,7 +456,15 @@ describe("inspection API", () => {
 
     expect(response.status).toBe(201);
     expect(response.body.upload).toBeNull();
+    expect(response.body.inspection).toMatchObject({
+      sourceType: "sample",
+      status: "queued",
+    });
     expect(storage.authorizeUpload).not.toHaveBeenCalled();
+    expect(storage.metadata).toHaveBeenCalledWith(
+      "samples/assembly-line-no-hard-hat.webm",
+    );
+    expect(repository.completeOwnedUpload).toHaveBeenCalledTimes(1);
   });
 
   it.each([

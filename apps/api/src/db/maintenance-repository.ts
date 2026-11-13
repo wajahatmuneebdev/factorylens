@@ -14,6 +14,7 @@ export interface CleanupInspectionRecord {
   normalizedObjectKey: string | null;
   predictionObjectKey: string | null;
   sourceObjectKey: string;
+  sourceType: (typeof schema.inspections.$inferSelect)["sourceType"];
 }
 
 export interface LeaseRecoveryCounts {
@@ -243,6 +244,7 @@ export class PostgresMaintenanceRepository implements MaintenanceRepository {
         normalizedObjectKey: schema.inspections.normalizedObjectKey,
         predictionObjectKey: schema.inspections.predictionObjectKey,
         sourceObjectKey: schema.inspections.sourceObjectKey,
+        sourceType: schema.inspections.sourceType,
       })
       .from(schema.inspections)
       .leftJoin(

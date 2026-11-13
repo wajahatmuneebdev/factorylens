@@ -56,6 +56,12 @@ const cursorPayloadSchema = z
   })
   .strict();
 
+const PREPARED_SAMPLE = {
+  contentType: "video/webm",
+  fileName: "assembly-line-no-hard-hat.webm",
+  objectKey: "samples/assembly-line-no-hard-hat.webm",
+} as const;
+
 export interface InspectionRouteDependencies {
   appOrigin: URL;
   now?: () => Date;
@@ -224,12 +230,16 @@ export function registerInspectionRoutes(
     let inspection: InspectionRecord;
     try {
       inspection = await dependencies.repository.createOwned({
-        declaredContentType: directSource?.contentType ?? null,
-        declaredFileName: directSource?.fileName ?? null,
+        declaredContentType:
+          directSource?.contentType ?? PREPARED_SAMPLE.contentType,
+        declaredFileName: directSource?.fileName ?? PREPARED_SAMPLE.fileName,
         declaredSizeBytes: directSource?.sizeBytes ?? null,
         id,
         ownerUserId: authenticatedUser(request).id,
-        sourceObjectKey: sourceObjectKey(id),
+        sourceObjectKey:
+          parsed.data.source.sourceType === "sample"
+            ? PREPARED_SAMPLE.objectKey
+            : sourceObjectKey(id),
         sourceType: parsed.data.source.sourceType,
         title: parsed.data.title,
         workflowKey: parsed.data.workflowKey,
@@ -244,12 +254,34 @@ export function registerInspectionRoutes(
     }
 
     try {
-      const upload = directSource
-        ? await dependencies.objectAccess.authorizeUpload(
-            inspection.sourceObjectKey,
-            directSource.contentType,
-          )
-        : null;
+      if (!directSource) {
+        const metadata = await dependencies.storage.metadata(
+          inspection.sourceObjectKey,
+        );
+        const completion = await dependencies.repository.completeOwnedUpload(
+          authenticatedUser(request).id,
+          inspection.id,
+          metadata.sizeBytes,
+          now(),
+        );
+        if (!completion) throw new Error("Prepared sample inspection was lost");
+        const dispatched = await dispatchPendingJob(
+          dependencies,
+          authenticatedUser(request).id,
+          inspection.id,
+          completion,
+          now(),
+        );
+        response.status(201).json({
+          inspection: inspectionResponse(dispatched),
+          upload: null,
+        });
+        return;
+      }
+      const upload = await dependencies.objectAccess.authorizeUpload(
+        inspection.sourceObjectKey,
+        directSource.contentType,
+      );
       response.status(201).json({
         inspection: inspectionResponse({ inspection, job: null }),
         upload: upload

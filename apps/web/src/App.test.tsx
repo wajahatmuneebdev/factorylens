@@ -95,7 +95,7 @@ describe("application shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers only the approved upload source and workflow", () => {
+  it("offers the approved video sources and workflow", () => {
     renderRoute("/inspections/new");
 
     expect(screen.getByRole("combobox", { name: "Workflow" })).toHaveValue(
@@ -105,7 +105,13 @@ describe("application shell", () => {
       "accept",
       "video/*",
     );
-    expect(screen.queryByRole("option", { name: /record/i })).toBeNull();
+    expect(screen.getByRole("radio", { name: /Upload a file/i })).toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: /Record now/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /Prepared sample/i }),
+    ).toBeInTheDocument();
   });
 
   it("opens and closes the shared confirmation dialog", () => {
