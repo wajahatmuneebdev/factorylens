@@ -135,6 +135,7 @@ export const UploadAuthorizationSchema = z
     expiresAt: timestamp,
   })
   .strict();
+export type UploadAuthorization = z.infer<typeof UploadAuthorizationSchema>;
 
 export const CreateInspectionResponseSchema = z
   .object({

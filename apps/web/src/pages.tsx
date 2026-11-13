@@ -1,12 +1,12 @@
-import { type FormEvent, type ReactNode, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { type ReactNode, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { PageState } from "./components/PageState";
+import { NewInspectionForm } from "./new-inspection";
 import {
   Badge,
   Button,
   Dialog,
-  Field,
   Notification,
   Progress,
   TableFrame,
@@ -164,80 +164,35 @@ export function DashboardPage() {
 }
 
 export function NewInspectionPage() {
-  const [noticeVisible, setNoticeVisible] = useState(false);
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setNoticeVisible(true);
-  }
-
   return (
     <div className="page-stack page-stack--narrow">
       <PageHeader eyebrow="Create" title="New inspection" />
       <p className="page-intro">
-        Set up the inspection workspace. Media upload and processing will be
-        connected in a later feature.
+        Choose a recording to securely upload. FactoryLens will verify it before
+        adding the inspection to the processing queue.
       </p>
-
-      {noticeVisible ? (
-        <Notification onDismiss={() => setNoticeVisible(false)}>
-          <strong>Form interaction confirmed.</strong>
-          <span>This preview does not create or upload an inspection.</span>
-        </Notification>
-      ) : null}
-
-      <form className="panel form-stack" onSubmit={handleSubmit}>
-        <div className="section-heading section-heading--bordered">
-          <div>
-            <p className="eyebrow">Details</p>
-            <h2>Describe the recording</h2>
-          </div>
-          <Badge>Step 1 of 2</Badge>
-        </div>
-        <Field
-          hint="Use a name that will be easy to find in history."
-          label="Inspection name"
-        >
-          <input
-            name="title"
-            placeholder="e.g. Packaging line check"
-            required
-          />
-        </Field>
-        <div className="form-grid">
-          <Field label="Source type">
-            <select defaultValue="upload" name="sourceType">
-              <option value="upload">Upload a video</option>
-              <option value="recording">Record in browser</option>
-              <option value="sample">Use prepared sample</option>
-            </select>
-          </Field>
-          <Field label="Workflow">
-            <select defaultValue="factory-safety-v1" name="workflow">
-              <option value="factory-safety-v1">Factory safety review</option>
-            </select>
-          </Field>
-        </div>
-        <div className="form-actions">
-          <Link className="button button--quiet" to="/dashboard">
-            Cancel
-          </Link>
-          <Button type="submit">Continue to media</Button>
-        </div>
-      </form>
+      <NewInspectionForm />
     </div>
   );
 }
 
 export function InspectionPage() {
   const { inspectionId } = useParams();
+  const location = useLocation();
+  const queuedInspection = (
+    location.state as { queuedInspection?: { title: string } } | null
+  )?.queuedInspection;
 
   return (
     <div className="page-stack">
       <PageHeader
-        action={<Badge tone="info">Processing</Badge>}
-        eyebrow="Inspection preview"
-        title="Packaging line check"
+        action={
+          <Badge tone="info">
+            {queuedInspection ? "Queued" : "Processing"}
+          </Badge>
+        }
+        eyebrow={queuedInspection ? "Inspection created" : "Inspection preview"}
+        title={queuedInspection?.title ?? "Packaging line check"}
       />
       <div className="detail-grid">
         <section aria-labelledby="media-title" className="media-placeholder">
@@ -258,9 +213,14 @@ export function InspectionPage() {
         <aside aria-labelledby="status-title" className="panel status-card">
           <div>
             <p className="eyebrow">Current stage</p>
-            <h2 id="status-title">Analyzing recording</h2>
+            <h2 id="status-title">
+              {queuedInspection ? "Waiting to begin" : "Analyzing recording"}
+            </h2>
           </div>
-          <Progress label="Inspection progress" value={62} />
+          <Progress
+            label={queuedInspection ? "Queued" : "Inspection progress"}
+            value={queuedInspection ? 0 : 62}
+          />
           <p className="muted-copy">
             Progress, playback, annotations, and result data are visual
             placeholders in this shell.
