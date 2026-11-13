@@ -607,6 +607,28 @@ p {
   border-radius: var(--radius-md);
 }
 
+.history-summary {
+  min-width: 12rem;
+  max-width: 24rem;
+  color: var(--ink-650);
+}
+
+.history-summary .progress {
+  min-width: 10rem;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--space-4);
+}
+
+.pagination__end {
+  margin: var(--space-4) 0 0;
+  text-align: center;
+  font-size: var(--text-sm);
+}
+
 table {
   width: 100%;
   min-width: 40rem;

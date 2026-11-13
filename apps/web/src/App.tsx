@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   BrowserRouter,
   Link,
@@ -20,6 +21,8 @@ import {
 } from "./pages";
 
 type IconName = "account" | "add" | "dashboard" | "history";
+
+const queryClient = new QueryClient();
 
 const iconPaths: Record<IconName, ReactNode> = {
   account: (
@@ -179,8 +182,10 @@ export function AppRoutes() {
 
 export function App() {
   return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }

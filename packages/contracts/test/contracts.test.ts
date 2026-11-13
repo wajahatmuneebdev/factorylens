@@ -9,6 +9,7 @@ import {
   ERROR_DEFINITIONS,
   ErrorCategorySchema,
   GoogleAuthRequestSchema,
+  INSPECTION_STATUS_PRESENTATION,
   JOB_TRANSITIONS,
   PREDICTION_CSV_COLUMNS,
   ProcessTaskMessageSchema,
@@ -183,6 +184,17 @@ describe("lifecycle contracts", () => {
     expect(canTransitionJob("retry_wait", "cancelled")).toBe(true);
     expect(canTransitionJob("completed", "running")).toBe(false);
     expect(JOB_TRANSITIONS.completed).toEqual([]);
+  });
+
+  it("defines the shared inspection status presentation", () => {
+    expect(INSPECTION_STATUS_PRESENTATION).toEqual({
+      awaiting_upload: { label: "Awaiting upload", tone: "neutral" },
+      queued: { label: "Queued", tone: "info" },
+      processing: { label: "Processing", tone: "info" },
+      completed: { label: "Completed", tone: "positive" },
+      failed: { label: "Failed", tone: "critical" },
+      cancelled: { label: "Cancelled", tone: "warning" },
+    });
   });
 });
 

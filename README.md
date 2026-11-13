@@ -44,8 +44,10 @@ access are connected. Browser recording and the curated prepared-sample input
 are also available from the same new-inspection flow. The
 committed prediction artifact is now available as its versioned JSON export,
 and owner-scoped CSV export streams stable per-prediction columns. The
-result-investigation interface is not connected yet. Owner-scoped cancellation
-and retry commands are also connected. A bounded, service-authenticated
+dashboard and paginated inspection-history views are connected to those
+owner-scoped queries. The result-investigation interface is not connected yet.
+Owner-scoped cancellation and retry commands are also connected. A bounded,
+service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
 uploads, and expired terminal inspection data.
 
