@@ -574,11 +574,15 @@ describe("inspection API", () => {
           status: "processing",
         },
         job: {
+          attemptCount: 2,
+          cancelRequestedAt: null,
           errorCode: "provider_unavailable",
           errorMessage: "Processing is temporarily unavailable.",
           id: "523e4567-e89b-42d3-a456-426614174000",
           progressPercent: 45,
           stage: "workflow",
+          maxAttempts: 3,
+          status: "running",
         },
       },
       {
@@ -1074,11 +1078,15 @@ describe("inspection API", () => {
           status: "processing",
         },
         job: {
+          attemptCount: 2,
+          cancelRequestedAt: currentTime,
           errorCode: null,
           errorMessage: null,
           id: "523e4567-e89b-42d3-a456-426614174000",
           progressPercent: 45,
           stage: "workflow",
+          maxAttempts: 3,
+          status: "running",
         },
       },
       {

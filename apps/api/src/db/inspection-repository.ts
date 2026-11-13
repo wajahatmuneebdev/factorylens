@@ -16,11 +16,15 @@ export type InspectionUpdate = Partial<
 >;
 
 export interface InspectionJobSummaryRecord {
+  attemptCount: number;
+  cancelRequestedAt: Date | null;
   errorCode: string | null;
   errorMessage: string | null;
   id: string;
   progressPercent: number;
   stage: string | null;
+  maxAttempts: number;
+  status: JobRecord["status"];
 }
 
 export interface InspectionViewRecord {
@@ -350,11 +354,15 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
       if (inspection.status === "cancelled") {
         const [job] = await transaction
           .select({
+            attemptCount: schema.jobs.attemptCount,
+            cancelRequestedAt: schema.jobs.cancelRequestedAt,
             id: schema.jobs.id,
             errorCode: schema.jobs.errorCode,
             errorMessage: schema.jobs.errorMessage,
             progressPercent: schema.jobs.progressPercent,
             stage: schema.jobs.stage,
+            maxAttempts: schema.jobs.maxAttempts,
+            status: schema.jobs.status,
           })
           .from(schema.jobs)
           .innerJoin(
@@ -417,11 +425,15 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
 
       const [updatedJob] = await transaction
         .select({
+          attemptCount: schema.jobs.attemptCount,
+          cancelRequestedAt: schema.jobs.cancelRequestedAt,
           id: schema.jobs.id,
           errorCode: schema.jobs.errorCode,
           errorMessage: schema.jobs.errorMessage,
           progressPercent: schema.jobs.progressPercent,
           stage: schema.jobs.stage,
+          maxAttempts: schema.jobs.maxAttempts,
+          status: schema.jobs.status,
         })
         .from(schema.jobs)
         .innerJoin(
@@ -653,11 +665,15 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
       .select({
         inspection: schema.inspections,
         job: {
+          attemptCount: schema.jobs.attemptCount,
+          cancelRequestedAt: schema.jobs.cancelRequestedAt,
           id: schema.jobs.id,
           errorCode: schema.jobs.errorCode,
           errorMessage: schema.jobs.errorMessage,
           progressPercent: schema.jobs.progressPercent,
           stage: schema.jobs.stage,
+          maxAttempts: schema.jobs.maxAttempts,
+          status: schema.jobs.status,
         },
       })
       .from(schema.inspections)

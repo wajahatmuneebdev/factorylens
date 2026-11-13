@@ -42,7 +42,6 @@ describe("application routes", () => {
     ["/sign-in", "See every moment that matters."],
     ["/dashboard", "Inspection dashboard"],
     ["/inspections/new", "New inspection"],
-    ["/inspections/example-id", "Packaging line check"],
     ["/history", "Inspection history"],
     ["/account", "Account"],
   ])("renders %s", (path, heading) => {
@@ -50,6 +49,13 @@ describe("application routes", () => {
 
     expect(
       screen.getByRole("heading", { level: 1, name: heading }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the inspection status loading state", () => {
+    renderRoute("/inspections/example-id");
+    expect(
+      screen.getByRole("heading", { name: "Loading inspection status" }),
     ).toBeInTheDocument();
   });
 

@@ -33,6 +33,7 @@ function inspection(
       stage: status === "processing" ? "running_workflow" : null,
       percent: status === "processing" ? 62 : status === "completed" ? 100 : 0,
     },
+    job: null,
     summary:
       status === "completed"
         ? {
@@ -154,15 +155,23 @@ describe("inspection dashboard and history", () => {
   });
 
   it("opens the selected inspection detail route", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      response([inspection(ids[0], "completed", "Packaging review")]),
-    );
+    const selected = inspection(ids[0], "completed", "Packaging review");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(response([selected]))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ inspection: selected }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }),
+      );
     renderRoute();
 
     fireEvent.click(
       await screen.findByRole("link", { name: "Packaging review" }),
     );
-    expect(await screen.findByText(ids[0])).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Packaging review" }),
+    ).toBeInTheDocument();
   });
 
   it("loads the next page only when the API supplies a cursor", async () => {
