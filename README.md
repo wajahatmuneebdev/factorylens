@@ -46,9 +46,10 @@ committed prediction artifact is now available as its versioned JSON export,
 and owner-scoped CSV export streams stable per-prediction columns. The
 dashboard and paginated inspection-history views are connected to those
 owner-scoped queries. The inspection status view now presents durable progress,
-bounded polling, safe failures, cancellation, and eligible retry controls. The
-result-investigation interface is not connected yet. Owner-scoped cancellation
-and retry commands are also connected. A bounded,
+bounded polling, safe failures, cancellation, and eligible retry controls.
+Completed inspections load their authorized prediction artifact once and show
+responsive, synchronized Canvas annotations over HTML video playback.
+Owner-scoped cancellation and retry commands are also connected. A bounded,
 service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
 uploads, and expired terminal inspection data.

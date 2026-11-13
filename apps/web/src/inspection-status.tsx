@@ -9,6 +9,7 @@ import { Navigate } from "react-router-dom";
 
 import { PageState } from "./components/PageState";
 import { Badge, Button, Notification, Progress } from "./components/ui";
+import { InspectionPlayer } from "./inspection-player";
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -129,20 +130,24 @@ export function InspectionStatus({ inspectionId }: { inspectionId: string }) {
         <Badge tone={presentation.tone}>{presentation.label}</Badge>
       </header>
       <div className="detail-grid">
-        <section aria-labelledby="media-title" className="media-placeholder">
-          <div className="media-placeholder__frame">
-            <span aria-hidden="true" className="media-placeholder__play">
-              ▶
-            </span>
-            <span>Video available when processing completes</span>
-          </div>
-          <div className="media-placeholder__caption">
-            <div>
-              <p className="eyebrow">Inspection identifier</p>
-              <strong id="media-title">{inspection.id}</strong>
+        {inspection.status === "completed" ? (
+          <InspectionPlayer inspectionId={inspection.id} />
+        ) : (
+          <section aria-labelledby="media-title" className="media-placeholder">
+            <div className="media-placeholder__frame">
+              <span aria-hidden="true" className="media-placeholder__play">
+                ▶
+              </span>
+              <span>Video available when processing completes</span>
             </div>
-          </div>
-        </section>
+            <div className="media-placeholder__caption">
+              <div>
+                <p className="eyebrow">Inspection identifier</p>
+                <strong id="media-title">{inspection.id}</strong>
+              </div>
+            </div>
+          </section>
+        )}
         <aside aria-labelledby="status-title" className="panel status-card">
           <div>
             <p className="eyebrow">Current stage</p>
