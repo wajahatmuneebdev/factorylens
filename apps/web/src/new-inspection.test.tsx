@@ -209,3 +209,139 @@ describe("new inspection upload", () => {
     );
   });
 });
+
+describe("recording and prepared sample inputs", () => {
+  it("requests camera permission only after the user starts recording", async () => {
+    const getUserMedia = vi
+      .fn()
+      .mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+    class RecordingCapability {
+      static isTypeSupported = vi.fn(() => true);
+    }
+    vi.stubGlobal("MediaRecorder", RecordingCapability);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    renderForm();
+    fireEvent.click(screen.getByRole("radio", { name: /Record now/i }));
+    expect(getUserMedia).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "permission was denied",
+    );
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true, video: true });
+  });
+
+  it("previews and uploads the browser-supported recording format", async () => {
+    class MockMediaRecorder extends EventTarget {
+      static instance: MockMediaRecorder;
+      static isTypeSupported = vi.fn((type: string) => type.includes("vp9"));
+      mimeType: string;
+      state = "inactive";
+      constructor(_stream: MediaStream, options: MediaRecorderOptions) {
+        super();
+        this.mimeType = options.mimeType ?? "";
+        MockMediaRecorder.instance = this;
+      }
+      start = vi.fn(() => {
+        this.state = "recording";
+      });
+      stop = vi.fn(() => {
+        this.state = "inactive";
+        const event = new Event("dataavailable") as BlobEvent;
+        Object.defineProperty(event, "data", {
+          value: new Blob(["recorded video"], { type: this.mimeType }),
+        });
+        this.dispatchEvent(event);
+        this.dispatchEvent(new Event("stop"));
+      });
+    }
+    const stopTrack = vi.fn();
+    const getUserMedia = vi.fn().mockResolvedValue({
+      getTracks: () => [{ stop: stopTrack }],
+    });
+    vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:recording");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(createResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            inspection: {
+              ...inspection,
+              sourceType: "recording",
+              status: "queued",
+              queuedAt: timestamp,
+            },
+            job: { id: jobId, status: "queued" },
+          }),
+          { status: 200 },
+        ),
+      );
+    renderForm();
+    fireEvent.change(screen.getByRole("textbox", { name: "Inspection name" }), {
+      target: { value: "Camera check" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /Record now/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    expect(
+      await screen.findByLabelText("Recorded video preview"),
+    ).toHaveAttribute("src", "blob:recording");
+    fireEvent.click(screen.getByRole("button", { name: "Create and upload" }));
+    await waitFor(() => expect(MockXmlHttpRequest.instances).toHaveLength(1));
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody.source).toMatchObject({
+      sourceType: "recording",
+      contentType: "video/webm;codecs=vp9,opus",
+      fileName: "factorylens-recording.webm",
+    });
+    MockXmlHttpRequest.instances[0]!.respond(200);
+    expect(
+      await screen.findByRole("heading", { name: "Created inspection" }),
+    ).toBeInTheDocument();
+    expect(stopTrack).toHaveBeenCalled();
+  });
+
+  it("creates the prepared sample through the inspection contract without uploading", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          inspection: { ...inspection, sourceType: "sample", status: "queued" },
+          upload: null,
+        }),
+        { status: 201 },
+      ),
+    );
+    renderForm();
+    fireEvent.change(screen.getByRole("textbox", { name: "Inspection name" }), {
+      target: { value: "Prepared sample" },
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /Prepared sample/i }));
+    expect(
+      screen.getByText("2-second, 1840 × 1080 WebM", { exact: false }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Inspect sample" }));
+    expect(
+      await screen.findByRole("heading", { name: "Created inspection" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({
+      source: {
+        sourceType: "sample",
+        sampleKey: "assembly-line-no-hard-hat",
+      },
+    });
+    expect(MockXmlHttpRequest.instances).toHaveLength(0);
+  });
+});

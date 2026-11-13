@@ -168,8 +168,8 @@ export function NewInspectionPage() {
     <div className="page-stack page-stack--narrow">
       <PageHeader eyebrow="Create" title="New inspection" />
       <p className="page-intro">
-        Choose a recording to securely upload. FactoryLens will verify it before
-        adding the inspection to the processing queue.
+        Upload an existing video, record one in this browser, or use the
+        prepared sample. Every source follows the same inspection contract.
       </p>
       <NewInspectionForm />
     </div>

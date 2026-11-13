@@ -37,6 +37,7 @@ function candidate(id = randomUUID()): CleanupInspectionRecord {
     normalizedObjectKey: `inspections/${id}/generations/2/normalized`,
     predictionObjectKey: `inspections/${id}/generations/2/prediction`,
     sourceObjectKey: `inspections/${id}/source`,
+    sourceType: "upload",
   };
 }
 
@@ -190,6 +191,29 @@ describe("POST /internal/maintenance/reconcile", () => {
     expect(storage.deleted).toContain(
       `inspections/${terminal}/generations/1/prediction`,
     );
+  });
+
+  it("retains the shared prepared-sample source during inspection cleanup", async () => {
+    const repository = new FakeRepository();
+    repository.terminal = [
+      {
+        ...candidate(),
+        sourceObjectKey: "samples/assembly-line-no-hard-hat.webm",
+        sourceType: "sample",
+      },
+    ];
+    const storage = new FakeStorage();
+    const { app } = maintenanceApp(repository, storage);
+
+    const response = await request(app)
+      .post("/internal/maintenance/reconcile")
+      .set("Authorization", "Bearer valid");
+
+    expect(response.status).toBe(200);
+    expect(storage.deleted).not.toContain(
+      "samples/assembly-line-no-hard-hat.webm",
+    );
+    expect(repository.deletedTerminal).toHaveLength(1);
   });
 
   it("is safe under concurrent invocations and repeats deterministic dispatch", async () => {

@@ -45,7 +45,7 @@ function cutoff(now: Date, ageMs: number): Date {
 }
 function objectKeys(candidate: CleanupInspectionRecord): string[] {
   const keys = [
-    candidate.sourceObjectKey,
+    candidate.sourceType === "sample" ? null : candidate.sourceObjectKey,
     candidate.normalizedObjectKey,
     candidate.predictionObjectKey,
   ];
