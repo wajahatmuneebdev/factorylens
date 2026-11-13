@@ -999,6 +999,7 @@ describe("PostgreSQL migrations", () => {
         status: "queued",
         error: null,
         progress: { stage: null, percent: 0 },
+        job: null,
       });
       const [stored] = await sql<
         {

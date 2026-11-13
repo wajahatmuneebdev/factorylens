@@ -1048,6 +1048,30 @@ textarea:focus-visible {
   align-self: start;
 }
 
+.status-details {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.status-details div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.status-details dt {
+  color: var(--ink-500);
+}
+
+.status-details dd {
+  margin: 0;
+  font-weight: 650;
+  text-align: right;
+}
+
 .muted-copy {
   margin-bottom: 0;
   font-size: var(--text-sm);

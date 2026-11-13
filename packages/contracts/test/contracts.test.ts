@@ -137,6 +137,8 @@ describe("browser API contracts", () => {
         sourceType: "upload",
         workflowKey: "factory-safety-v1",
         progress: { stage: null, percent: 0 },
+        job: null,
+        job: null,
         summary: null,
         error: null,
         createdAt: timestamp,

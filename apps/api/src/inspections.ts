@@ -125,6 +125,14 @@ function inspectionResponse(record: InspectionViewRecord): Inspection {
       stage: job?.stage ?? null,
       percent: job?.progressPercent ?? 0,
     },
+    job: job
+      ? {
+          status: job.status,
+          attempt: job.attemptCount,
+          maxAttempts: job.maxAttempts,
+          cancellationRequested: job.cancelRequestedAt !== null,
+        }
+      : null,
     summary,
     error:
       storedError(inspection.errorCode, inspection.errorMessage) ??

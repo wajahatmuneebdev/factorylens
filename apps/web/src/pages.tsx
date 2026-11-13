@@ -1,10 +1,11 @@
 import { type ReactNode, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { PageState } from "./components/PageState";
 import { NewInspectionForm } from "./new-inspection";
 import { InspectionHistory, RecentInspections } from "./inspection-history";
-import { Badge, Button, Dialog, Notification, Progress } from "./components/ui";
+import { InspectionStatus } from "./inspection-status";
+import { Badge, Button, Dialog, Notification } from "./components/ui";
 
 function PageHeader({
   action,
@@ -70,58 +71,9 @@ export function NewInspectionPage() {
 
 export function InspectionPage() {
   const { inspectionId } = useParams();
-  const location = useLocation();
-  const queuedInspection = (
-    location.state as { queuedInspection?: { title: string } } | null
-  )?.queuedInspection;
-
   return (
     <div className="page-stack">
-      <PageHeader
-        action={
-          <Badge tone="info">
-            {queuedInspection ? "Queued" : "Processing"}
-          </Badge>
-        }
-        eyebrow={queuedInspection ? "Inspection created" : "Inspection preview"}
-        title={queuedInspection?.title ?? "Packaging line check"}
-      />
-      <div className="detail-grid">
-        <section aria-labelledby="media-title" className="media-placeholder">
-          <div className="media-placeholder__frame">
-            <span aria-hidden="true" className="media-placeholder__play">
-              ▶
-            </span>
-            <span>Video player surface</span>
-          </div>
-          <div className="media-placeholder__caption">
-            <div>
-              <p className="eyebrow">Route parameter</p>
-              <strong id="media-title">{inspectionId}</strong>
-            </div>
-            <span>00:00 / 00:42</span>
-          </div>
-        </section>
-        <aside aria-labelledby="status-title" className="panel status-card">
-          <div>
-            <p className="eyebrow">Current stage</p>
-            <h2 id="status-title">
-              {queuedInspection ? "Waiting to begin" : "Analyzing recording"}
-            </h2>
-          </div>
-          <Progress
-            label={queuedInspection ? "Queued" : "Inspection progress"}
-            value={queuedInspection ? 0 : 62}
-          />
-          <p className="muted-copy">
-            Progress, playback, annotations, and result data are visual
-            placeholders in this shell.
-          </p>
-          <Button disabled variant="secondary">
-            Cancel unavailable in preview
-          </Button>
-        </aside>
-      </div>
+      {inspectionId ? <InspectionStatus inspectionId={inspectionId} /> : null}
     </div>
   );
 }

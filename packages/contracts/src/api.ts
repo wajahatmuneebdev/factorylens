@@ -81,6 +81,15 @@ export const InspectionSchema = z
         percent: z.number().int().min(0).max(100),
       })
       .strict(),
+    job: z
+      .object({
+        status: JobStateSchema,
+        attempt: z.number().int().nonnegative(),
+        maxAttempts: z.number().int().positive(),
+        cancellationRequested: z.boolean(),
+      })
+      .strict()
+      .nullable(),
     summary: InspectionSummarySchema.nullable(),
     error: SafeErrorSchema.nullable(),
     createdAt: timestamp,
