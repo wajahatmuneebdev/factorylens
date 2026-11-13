@@ -95,33 +95,17 @@ describe("application shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("demonstrates form and notification primitives without creating data", () => {
+  it("offers only the approved upload source and workflow", () => {
     renderRoute("/inspections/new");
 
-    expect(screen.getByRole("combobox", { name: "Source type" })).toHaveValue(
-      "upload",
-    );
-    expect(
-      screen.getByRole("option", { name: "Record in browser" }),
-    ).toHaveValue("recording");
     expect(screen.getByRole("combobox", { name: "Workflow" })).toHaveValue(
       "factory-safety-v1",
     );
-    expect(
-      screen.queryByRole("textbox", { name: "Notes" }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.change(screen.getByRole("textbox", { name: "Inspection name" }), {
-      target: { value: "Line review" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Continue to media" }));
-
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Form interaction confirmed",
+    expect(screen.getByLabelText("Video file")).toHaveAttribute(
+      "accept",
+      "video/*",
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "does not create or upload",
-    );
+    expect(screen.queryByRole("option", { name: /record/i })).toBeNull();
   });
 
   it("opens and closes the shared confirmation dialog", () => {
