@@ -40,6 +40,8 @@ FactoryLens sessions, and owner-scoped inspection access boundaries are
 connected, as are inspection creation, history, detail, verified upload
 completion, durable job creation, and post-commit task dispatch. Direct upload
 authorization and private artifact access are connected. The
+committed prediction artifact is now available as its versioned JSON export,
+and owner-scoped CSV export streams stable per-prediction columns. The
 result-investigation interface is not connected yet. Owner-scoped cancellation
 and retry commands are also connected.
 

@@ -10,6 +10,7 @@ import {
   ErrorCategorySchema,
   GoogleAuthRequestSchema,
   JOB_TRANSITIONS,
+  PREDICTION_CSV_COLUMNS,
   ProcessTaskMessageSchema,
   PredictionArtifactV1Schema,
   SafeErrorSchema,
@@ -53,6 +54,20 @@ describe("browser API contracts", () => {
       expect(contract.request).toBeDefined();
       expect(contract.response).toBeDefined();
     }
+  });
+
+  it("defines stable per-prediction CSV columns", () => {
+    expect(PREDICTION_CSV_COLUMNS).toEqual([
+      "inspection_id",
+      "timestamp_ms",
+      "prediction_id",
+      "class_name",
+      "confidence",
+      "box_x",
+      "box_y",
+      "box_width",
+      "box_height",
+    ]);
   });
 
   it("accepts direct uploads and the one prepared sample", () => {

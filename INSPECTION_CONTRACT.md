@@ -205,6 +205,29 @@ The following compact example is complete for a one-second source clip:
 The fingerprint value illustrates the required format. A processing run records
 the SHA-256 of the actual exported, versioned Workflow definition it used.
 
+### Export contract
+
+The authorized prediction download is the canonical gzip-compressed JSON
+export. It is the committed artifact unchanged, including its `schemaVersion`,
+and therefore preserves the complete versioned prediction contract.
+
+The CSV export contains one row per frame prediction in timestamp order. Its
+stable columns are:
+
+| Column | Meaning |
+| --- | --- |
+| `inspection_id` | FactoryLens inspection UUID |
+| `timestamp_ms` | Frame time on the media timeline |
+| `prediction_id` | Deterministic prediction ID within the artifact |
+| `class_name` | `Person`, `Hardhat`, or `NO-Hardhat` |
+| `confidence` | Model confidence from 0 through 1 |
+| `box_x`, `box_y` | Bounding-box center in source-display pixels |
+| `box_width`, `box_height` | Bounding-box size in source-display pixels |
+
+The header is present even when an artifact has no predictions. Events,
+summary values, source metadata, and Workflow provenance remain available in
+the JSON export rather than being flattened into unrelated CSV row types.
+
 ## 5. Sample media and expected fixture
 
 The prepared violation sample is a normalized derivative of
