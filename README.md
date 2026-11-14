@@ -48,7 +48,8 @@ dashboard and paginated inspection-history views are connected to those
 owner-scoped queries. The inspection status view now presents durable progress,
 bounded polling, safe failures, cancellation, and eligible retry controls.
 Completed inspections load their authorized prediction artifact once and show
-responsive, synchronized Canvas annotations over HTML video playback.
+responsive, synchronized Canvas annotations over HTML video playback, with
+local class and confidence filters plus an artifact-derived event timeline.
 Owner-scoped cancellation and retry commands are also connected. A bounded,
 service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
