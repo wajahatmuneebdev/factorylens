@@ -23,7 +23,12 @@ class InspectionRequestError extends Error {
 }
 
 async function inspectionRequest(url: string, method = "GET") {
-  const response = await fetch(url, { method });
+  const response = await fetch(url, {
+    method,
+    ...(method === "POST"
+      ? { body: "{}", headers: { "Content-Type": "application/json" } }
+      : {}),
+  });
   if (!response.ok) {
     const body = ErrorResponseSchema.safeParse(
       await response.json().catch(() => null),

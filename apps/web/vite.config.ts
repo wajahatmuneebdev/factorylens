@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/api": environment.WEB_API_TARGET ?? "http://127.0.0.1:3000",
         "/auth": environment.WEB_API_TARGET ?? "http://127.0.0.1:3000",
+        "/__e2e": environment.WEB_API_TARGET ?? "http://127.0.0.1:3000",
       },
     },
     test: {
