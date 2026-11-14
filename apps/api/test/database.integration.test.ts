@@ -21,7 +21,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import type { OidcProvider } from "../src/auth.js";
 import { PostgresAuthStore } from "../src/db/auth-store.js";
-import { PostgresInspectionRepository } from "../src/db/inspection-repository.js";
+import {
+  ActiveInspectionQuotaError,
+  PostgresInspectionRepository,
+} from "../src/db/inspection-repository.js";
 import * as schema from "../src/db/schema.js";
 import { hashSessionToken } from "../src/session.js";
 import {
@@ -467,6 +470,36 @@ describe("PostgreSQL migrations", () => {
       new Date(now.getTime() - 10_000),
     );
     await expect(store.findActiveUser(expiredHash, now)).resolves.toBeNull();
+  });
+
+  it("serializes concurrent creation against the per-user active-work quota", async () => {
+    const { repository, user } = await createUploadHarness(
+      new RecordingTaskDispatcher(),
+    );
+    const inputs = [randomUUID(), randomUUID()].map((id) => ({
+      id,
+      ownerUserId: user.id,
+      title: "Quota race",
+      sourceType: "upload" as const,
+      workflowKey: "factory-safety-v1",
+      sourceObjectKey: `inspections/${id}/source`,
+      declaredFileName: "line.webm",
+      declaredContentType: "video/webm",
+      declaredSizeBytes: 4096,
+    }));
+
+    const results = await Promise.allSettled(
+      inputs.map((input) => repository.createOwned(input, 1)),
+    );
+
+    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(
+      1,
+    );
+    const rejected = results.find(({ status }) => status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.any(ActiveInspectionQuotaError),
+    });
   });
 
   it("scopes inspection reads and writes to the current owner", async () => {

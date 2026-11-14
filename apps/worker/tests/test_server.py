@@ -64,6 +64,11 @@ class FakeExecutor:
         return self.outcome
 
 
+class FakeIdentityVerifier:
+    def verify(self, token: str) -> bool:
+        return token == "valid-service-token"
+
+
 @contextmanager
 def running_server(
     store: FakeLeaseStore, executor: FakeExecutor
@@ -71,6 +76,7 @@ def running_server(
     server = WorkerServer(("127.0.0.1", 0), WorkerHandler)
     server.lease_store = store
     server.executor = executor
+    server.identity_verifier = FakeIdentityVerifier()
     thread = Thread(target=server.serve_forever)
     thread.start()
     try:
@@ -87,15 +93,22 @@ def post_task(
     payload: object,
     content_type: str = "application/json",
     executor: FakeExecutor | None = None,
+    authorization: str | None = "Bearer valid-service-token",
+    cookie: str | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
     body = json.dumps(payload).encode()
     with running_server(store, executor or FakeExecutor()) as (host, port):
         connection = HTTPConnection(host, port)
+        headers = {"Content-Type": content_type}
+        if authorization is not None:
+            headers["Authorization"] = authorization
+        if cookie is not None:
+            headers["Cookie"] = cookie
         connection.request(
             "POST",
             "/internal/tasks/process",
             body=body,
-            headers={"Content-Type": content_type},
+            headers=headers,
         )
         response = connection.getresponse()
         result = response.status, dict(response.getheaders()), response.read()
@@ -185,6 +198,34 @@ def test_task_endpoint_requires_json() -> None:
 
     assert status == 415
     assert json.loads(body) == {"error": "content_type_must_be_json"}
+    assert store.messages == []
+
+
+@pytest.mark.parametrize(
+    ("authorization", "cookie"),
+    [
+        (None, None),
+        ("Bearer invalid", None),
+        (
+            "Bearer valid-service-token",
+            "__Host-factorylens_session=browser-token",
+        ),
+    ],
+)
+def test_task_endpoint_requires_service_identity_and_rejects_browser_sessions(
+    authorization: str | None, cookie: str | None
+) -> None:
+    store = FakeLeaseStore(LeaseOutcome.ACQUIRED)
+
+    status, _, body = post_task(
+        store,
+        VALID_TASK,
+        authorization=authorization,
+        cookie=cookie,
+    )
+
+    assert status == 401
+    assert json.loads(body) == {"error": "authentication_required"}
     assert store.messages == []
 
 

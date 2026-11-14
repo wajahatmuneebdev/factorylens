@@ -5,16 +5,25 @@ import { type AuthDependencies, registerAuthRoutes } from "./auth.js";
 import type { InspectionApiRepository } from "./db/inspection-repository.js";
 import type { MaintenanceRepository } from "./db/maintenance-repository.js";
 import type { InternalIdentityVerifier } from "./internal-auth.js";
-import { registerInspectionRoutes } from "./inspections.js";
+import {
+  registerInspectionRoutes,
+  type InspectionPolicy,
+} from "./inspections.js";
 import {
   registerMaintenanceRoutes,
   type MaintenancePolicy,
 } from "./maintenance.js";
+import {
+  browserCsrfProtection,
+  RequestRateLimiter,
+  securityHeaders,
+} from "./security.js";
 import type { ObjectAccessAuthorizer, ObjectStorage } from "./storage.js";
 import type { TaskDispatcher } from "./task-dispatcher.js";
 
 export interface AppDependencies extends AuthDependencies {
   inspections?: InspectionApiRepository;
+  inspectionPolicy?: InspectionPolicy;
   internalIdentityVerifier?: InternalIdentityVerifier;
   maintenance?: MaintenanceRepository;
   maintenancePolicy?: MaintenancePolicy;
@@ -26,12 +35,18 @@ export interface AppDependencies extends AuthDependencies {
 export function createApp(dependencies?: AppDependencies): express.Express {
   const app = express();
 
+  app.disable("x-powered-by");
+  app.set("trust proxy", 1);
+  app.use(securityHeaders);
+
   app.get("/health", (_request, response) => {
     response.json(createHealthResponse("api"));
   });
 
   if (dependencies) {
-    registerAuthRoutes(app, dependencies);
+    const requestRateLimiter = new RequestRateLimiter();
+    app.use(browserCsrfProtection(dependencies.appOrigin));
+    registerAuthRoutes(app, { ...dependencies, requestRateLimiter });
     if (dependencies.inspections) {
       if (
         !dependencies.objectAccess ||
@@ -49,6 +64,8 @@ export function createApp(dependencies?: AppDependencies): express.Express {
         repository: dependencies.inspections,
         storage: dependencies.storage,
         taskDispatcher: dependencies.taskDispatcher,
+        requestRateLimiter,
+        policy: dependencies.inspectionPolicy,
       });
     }
     if (dependencies.maintenance) {

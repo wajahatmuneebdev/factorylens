@@ -23,6 +23,11 @@ import {
   SESSION_COOKIE_NAME,
   type SessionStore,
 } from "./session.js";
+import {
+  DEFAULT_RATE_LIMITS,
+  rateLimit,
+  RequestRateLimiter,
+} from "./security.js";
 
 const TRANSACTION_COOKIE_NAME = "factorylens_oidc";
 const TRANSACTION_COOKIE_PATH = "/auth/google/callback";
@@ -83,6 +88,7 @@ export interface AuthDependencies {
   store: AuthStore;
   transactionSecret: string;
   now?: () => Date;
+  requestRateLimiter?: RequestRateLimiter;
 }
 
 function sealTransaction(
@@ -167,6 +173,8 @@ export function registerAuthRoutes(
   }
 
   const now = dependencies.now ?? (() => new Date());
+  const requestRateLimiter =
+    dependencies.requestRateLimiter ?? new RequestRateLimiter();
 
   app.use(["/auth", "/api"], (_request, response, next) => {
     response.set({
@@ -178,54 +186,58 @@ export function registerAuthRoutes(
 
   app.use("/api", requireSession({ store: dependencies.store, now }));
 
-  app.get("/auth/google", async (request, response) => {
-    const parsed = GoogleAuthRequestSchema.safeParse(request.query);
-    if (!parsed.success) {
-      response.status(400).json({
-        error: {
-          code: "invalid_request",
-          category: "terminal",
-          message: "The sign-in request is invalid.",
-        },
-      });
-      return;
-    }
+  app.get(
+    "/auth/google",
+    rateLimit(requestRateLimiter, "sign-in", DEFAULT_RATE_LIMITS.signIn, now),
+    async (request, response) => {
+      const parsed = GoogleAuthRequestSchema.safeParse(request.query);
+      if (!parsed.success) {
+        response.status(400).json({
+          error: {
+            code: "invalid_request",
+            category: "terminal",
+            message: "The sign-in request is invalid.",
+          },
+        });
+        return;
+      }
 
-    try {
-      const authorization =
-        await dependencies.oidcProvider.createAuthorizationRequest(
-          dependencies.callbackUrl,
+      try {
+        const authorization =
+          await dependencies.oidcProvider.createAuthorizationRequest(
+            dependencies.callbackUrl,
+          );
+        const currentTime = now();
+        const transaction = sealTransaction(
+          {
+            codeVerifier: authorization.codeVerifier,
+            nonce: authorization.nonce,
+            returnTo: parsed.data.returnTo ?? "/",
+            state: authorization.state,
+            expiresAt: currentTime.getTime() + TRANSACTION_LIFETIME_MS,
+          },
+          dependencies.transactionSecret,
         );
-      const currentTime = now();
-      const transaction = sealTransaction(
-        {
-          codeVerifier: authorization.codeVerifier,
-          nonce: authorization.nonce,
-          returnTo: parsed.data.returnTo ?? "/",
-          state: authorization.state,
-          expiresAt: currentTime.getTime() + TRANSACTION_LIFETIME_MS,
-        },
-        dependencies.transactionSecret,
-      );
 
-      response.cookie(TRANSACTION_COOKIE_NAME, transaction, {
-        httpOnly: true,
-        maxAge: TRANSACTION_LIFETIME_MS,
-        path: TRANSACTION_COOKIE_PATH,
-        sameSite: "lax",
-        secure: true,
-      });
-      response.redirect(302, authorization.location.href);
-    } catch {
-      response.status(503).json({
-        error: {
-          code: "provider_unavailable",
-          category: "retryable",
-          message: "Google sign-in is temporarily unavailable.",
-        },
-      });
-    }
-  });
+        response.cookie(TRANSACTION_COOKIE_NAME, transaction, {
+          httpOnly: true,
+          maxAge: TRANSACTION_LIFETIME_MS,
+          path: TRANSACTION_COOKIE_PATH,
+          sameSite: "lax",
+          secure: true,
+        });
+        response.redirect(302, authorization.location.href);
+      } catch {
+        response.status(503).json({
+          error: {
+            code: "provider_unavailable",
+            category: "retryable",
+            message: "Google sign-in is temporarily unavailable.",
+          },
+        });
+      }
+    },
+  );
 
   app.get("/auth/google/callback", async (request, response) => {
     const transactionCookie = readCookie(request, TRANSACTION_COOKIE_NAME);

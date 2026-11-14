@@ -15,6 +15,7 @@ import * as schema from "./db/schema.js";
 import { createGoogleOidcProvider } from "./google-oidc.js";
 import { GoogleServiceIdentityVerifier } from "./internal-auth.js";
 import { R2ObjectStorage } from "./storage.js";
+import { writeStructuredLog } from "./security.js";
 import { LocalTaskDispatcher } from "./task-dispatcher.js";
 
 const environmentSchema = z.object({
@@ -36,6 +37,14 @@ const environmentSchema = z.object({
     .max(300)
     .default(50),
   MAINTENANCE_RETENTION_DAYS: z.coerce.number().positive().default(30),
+  MAX_ACTIVE_INSPECTIONS_PER_USER: z.coerce.number().int().min(1).default(3),
+  MAX_PROCESSING_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+  MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(250 * 1024 * 1024)
+    .default(250 * 1024 * 1024),
   R2_ACCESS_KEY_ID: z.string().min(1),
   R2_ACCOUNT_ID: z.string().regex(/^[0-9a-f]{32}$/i),
   R2_BUCKET: z.string().min(1),
@@ -60,6 +69,15 @@ async function start(): Promise<void> {
     taskDispatcherMode === "cloud-tasks"
       ? cloudTasksConfigurationFromEnvironment(process.env)
       : undefined;
+  if (
+    cloudTasksConfiguration !== undefined &&
+    cloudTasksConfiguration.queue.retry.maxAttempts !==
+      environment.MAX_PROCESSING_ATTEMPTS
+  ) {
+    throw new Error(
+      "MAX_PROCESSING_ATTEMPTS must match CLOUD_TASKS_MAX_ATTEMPTS",
+    );
+  }
 
   const databaseClient = postgres(environment.DATABASE_URL);
   const database = drizzle(databaseClient, { schema });
@@ -91,6 +109,11 @@ async function start(): Promise<void> {
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     oidcProvider,
     inspections: new PostgresInspectionRepository(database),
+    inspectionPolicy: {
+      maxActiveInspections: environment.MAX_ACTIVE_INSPECTIONS_PER_USER,
+      maxAttempts: environment.MAX_PROCESSING_ATTEMPTS,
+      maxUploadBytes: environment.MAX_UPLOAD_BYTES,
+    },
     internalIdentityVerifier: new GoogleServiceIdentityVerifier(
       environment.MAINTENANCE_OIDC_AUDIENCE,
       environment.MAINTENANCE_SERVICE_ACCOUNT_EMAIL,
@@ -113,9 +136,10 @@ async function start(): Promise<void> {
   });
 
   const server = app.listen(environment.API_PORT, environment.API_HOST, () => {
-    console.log(
-      `FactoryLens API listening on http://${environment.API_HOST}:${environment.API_PORT}`,
-    );
+    writeStructuredLog("info", "api_listening", {
+      host: environment.API_HOST,
+      port: environment.API_PORT,
+    });
   });
 
   const shutdown = (): void => {
@@ -128,6 +152,6 @@ async function start(): Promise<void> {
 }
 
 void start().catch(() => {
-  console.error("FactoryLens API failed to start");
+  writeStructuredLog("error", "api_start_failed");
   process.exitCode = 1;
 });

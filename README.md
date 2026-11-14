@@ -56,6 +56,10 @@ Owner-scoped cancellation and retry commands are also connected. A bounded,
 service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
 uploads, and expired terminal inspection data.
+Cross-cutting application protections now enforce same-origin state changes,
+security headers, bounded request rates, per-user active-work quotas, configured
+media and attempt limits, Google service identity on internal routes, and
+structured-log redaction.
 
 ## Development
 
@@ -96,6 +100,25 @@ variable described below is required only for its opt-in integration test. Set
 `npm run configure:tasks --workspace @factorylens/api` with deployment
 credentials to apply the configured rate, concurrency, and retry limits to an
 already-provisioned queue.
+
+The default application safety policy permits at most three active inspections
+per user and enforces a 250 MiB, five-minute, 1920×1080 media envelope with at
+most three processing attempts. The API and worker environment examples expose
+the corresponding deployment settings; API upload limits may tighten, but not
+expand, the public 250 MiB request contract. Browser-facing request limits are
+applied per running API instance and return `429` with `RateLimit-*` and
+`Retry-After` headers:
+
+| Route / operation                            | Default limit                                 |
+| -------------------------------------------- | --------------------------------------------- |
+| Google sign-in                               | 10 requests per client address per 15 minutes |
+| Inspection creation and upload authorization | 10 requests per user per minute               |
+| Inspection retry                             | 5 requests per user per 15 minutes            |
+
+The application API intentionally does not enable broad CORS. State-changing
+browser requests require the configured application origin, while worker and
+maintenance endpoints require their configured Google service identities and
+reject FactoryLens browser-session cookies.
 
 Worker progress uses stable stage names: `validating_media` begins at 5%,
 `running_workflow` begins at 30% and advances to 90%, `writing_artifact` begins

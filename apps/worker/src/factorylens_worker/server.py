@@ -8,13 +8,14 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from factorylens_worker.contracts import ProcessTaskMessage
+from factorylens_worker.internal_auth import GoogleServiceIdentityVerifier
 from factorylens_worker.job_lease import (
     JobLease,
     LeaseDecision,
     LeaseOutcome,
     PostgresJobLeaseStore,
 )
-from factorylens_worker.media_validation import MediaValidationStage
+from factorylens_worker.media_validation import MediaLimits, MediaValidationStage
 from factorylens_worker.media_validation_store import PostgresMediaMetadataStore
 from factorylens_worker.prediction_artifact import PredictionArtifactStage
 from factorylens_worker.prediction_artifact_store import (
@@ -46,9 +47,14 @@ class JobExecutor(Protocol):
     def execute(self, lease: JobLease) -> TaskExecutionOutcome: ...
 
 
+class InternalIdentityVerifier(Protocol):
+    def verify(self, token: str) -> bool: ...
+
+
 class WorkerServer(ThreadingHTTPServer):
     lease_store: JobLeaseStore
     executor: JobExecutor
+    identity_verifier: InternalIdentityVerifier
 
 
 def json_payload(value: object) -> bytes:
@@ -58,6 +64,17 @@ def json_payload(value: object) -> bytes:
 def health_payload() -> bytes:
     """Return the worker health response as encoded JSON."""
     return json_payload({"service": "worker", "status": "ok"})
+
+
+def positive_environment_integer(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a positive integer") from error
+    if value < 1:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return value
 
 
 class WorkerHandler(BaseHTTPRequestHandler):
@@ -75,6 +92,15 @@ class WorkerHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path != "/internal/tasks/process":
             self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        token = self._bearer_token()
+        if (
+            self._has_browser_session()
+            or token is None
+            or not self._worker_server.identity_verifier.verify(token)
+        ):
+            self._send_error_json(HTTPStatus.UNAUTHORIZED, "authentication_required")
             return
 
         body = self._read_json_body()
@@ -169,6 +195,21 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
         return self.rfile.read(length)
 
+    def _bearer_token(self) -> str | None:
+        authorization = self.headers.get("Authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        if separator != " " or scheme.lower() != "bearer" or not token:
+            return None
+        if any(character.isspace() for character in token):
+            return None
+        return token
+
+    def _has_browser_session(self) -> bool:
+        return any(
+            entry.strip().startswith("__Host-factorylens_session=")
+            for entry in self.headers.get("Cookie", "").split(";")
+        )
+
     def _send_empty(self, status: HTTPStatus) -> None:
         self.send_response(status)
         self.send_header("Content-Length", "0")
@@ -208,6 +249,12 @@ def main() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if database_url is None:
         raise RuntimeError("DATABASE_URL is required")
+    oidc_audience = os.environ.get("WORKER_OIDC_AUDIENCE")
+    service_account_email = os.environ.get("CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL")
+    if not oidc_audience or not service_account_email:
+        raise RuntimeError(
+            "WORKER_OIDC_AUDIENCE and CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL are required"
+        )
 
     required_r2_values = {
         name: os.environ.get(name)
@@ -231,12 +278,23 @@ def main() -> None:
         bucket=required_r2_values["R2_BUCKET"] or "",
     )
     workflow_configuration = workflow_configuration_from_environment()
+    media_limits = MediaLimits(
+        max_size_bytes=positive_environment_integer(
+            "MAX_UPLOAD_BYTES", 250 * 1024 * 1024
+        ),
+        max_duration_ms=positive_environment_integer(
+            "MAX_MEDIA_DURATION_MS", 5 * 60 * 1000
+        ),
+        max_width=positive_environment_integer("MAX_MEDIA_WIDTH", 1920),
+        max_height=positive_environment_integer("MAX_MEDIA_HEIGHT", 1080),
+    )
     lease_store = PostgresJobLeaseStore(database_url)
     pipeline = InspectionProcessingPipeline(
         storage=storage,
         media_stage=MediaValidationStage(
             storage,
             PostgresMediaMetadataStore(database_url),
+            limits=media_limits,
         ),
         frame_sampler=FfmpegFrameSampler(),
         workflow_runner=create_workflow_runner(workflow_configuration),
@@ -250,6 +308,9 @@ def main() -> None:
     server = WorkerServer((host, port), WorkerHandler)
     server.lease_store = lease_store
     server.executor = TaskExecutor(lease_store, pipeline)
+    server.identity_verifier = GoogleServiceIdentityVerifier(
+        oidc_audience, service_account_email
+    )
     print(f"FactoryLens worker listening on http://{host}:{port}")
 
     try:

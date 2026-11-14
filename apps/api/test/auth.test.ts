@@ -251,4 +251,19 @@ describe("Google sign-in and FactoryLens sessions", () => {
       .set("Cookie", sessionCookie);
     expect(revoked.status).toBe(401);
   });
+
+  it("rate limits repeated sign-in attempts by client address", async () => {
+    const app = authApp();
+    const responses = [];
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      responses.push(await request(app).get("/auth/google"));
+    }
+
+    expect(responses.slice(0, 10).every(({ status }) => status === 302)).toBe(
+      true,
+    );
+    expect(responses[10]!.status).toBe(429);
+    expect(responses[10]!.body.error.code).toBe("rate_limit_exceeded");
+    expect(responses[10]!.headers["retry-after"]).toBe("900");
+  });
 });

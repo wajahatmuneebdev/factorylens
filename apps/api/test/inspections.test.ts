@@ -20,7 +20,11 @@ import type {
   JobRecord,
   UploadCompletionRecord,
 } from "../src/db/inspection-repository.js";
-import { InspectionCommandConflictError } from "../src/db/inspection-repository.js";
+import {
+  ActiveInspectionQuotaError,
+  InspectionCommandConflictError,
+} from "../src/db/inspection-repository.js";
+import type { InspectionPolicy } from "../src/inspections.js";
 import { hashSessionToken } from "../src/session.js";
 import {
   type ObjectAccessAuthorizer,
@@ -362,11 +366,13 @@ function inspectionApp(
   repository: FakeInspectionRepository,
   storage: ObjectStorage & ObjectAccessAuthorizer = new FakeStorage(),
   taskDispatcher: TaskDispatcher = new FakeTaskDispatcher(),
+  inspectionPolicy?: InspectionPolicy,
 ) {
   return createApp({
     appOrigin,
     callbackUrl: new URL("/auth/google/callback", appOrigin),
     inspections: repository,
+    inspectionPolicy,
     now: () => currentTime,
     objectAccess: storage,
     oidcProvider,
@@ -425,6 +431,7 @@ describe("inspection API", () => {
         sourceType: "upload",
         title: "Shift 2 review",
       }),
+      3,
     );
     const created = repository.createOwned.mock.calls[0]![0];
     expect(created.sourceObjectKey).toBe(`inspections/${created.id}/source`);
@@ -544,6 +551,101 @@ describe("inspection API", () => {
     expect(crossOrigin.status).toBe(403);
     expect(crossOrigin.body.error.code).toBe("access_denied");
     expect(repository.createOwned).not.toHaveBeenCalled();
+  });
+
+  it("enforces configured upload and active-work limits before authorization", async () => {
+    const policy: InspectionPolicy = {
+      maxActiveInspections: 1,
+      maxAttempts: 2,
+      maxUploadBytes: 1024,
+    };
+    const oversizedRepository = new FakeInspectionRepository();
+    const oversizedStorage = new FakeStorage();
+    const oversized = await authenticated(
+      request(
+        inspectionApp(
+          oversizedRepository,
+          oversizedStorage,
+          new FakeTaskDispatcher(),
+          policy,
+        ),
+      )
+        .post("/api/inspections")
+        .set("Origin", appOrigin.origin),
+    ).send({
+      title: "Oversized",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "upload",
+        fileName: "large.webm",
+        contentType: "video/webm",
+        sizeBytes: 1025,
+      },
+    });
+
+    const quotaRepository = new FakeInspectionRepository();
+    quotaRepository.createOwned.mockRejectedValueOnce(
+      new ActiveInspectionQuotaError(1),
+    );
+    const quota = await authenticated(
+      request(
+        inspectionApp(
+          quotaRepository,
+          new FakeStorage(),
+          new FakeTaskDispatcher(),
+          policy,
+        ),
+      )
+        .post("/api/inspections")
+        .set("Origin", appOrigin.origin),
+    ).send({
+      title: "At quota",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "upload",
+        fileName: "line.webm",
+        contentType: "video/webm",
+        sizeBytes: 1024,
+      },
+    });
+
+    expect(oversized.status).toBe(413);
+    expect(oversized.body.error.code).toBe("invalid_media");
+    expect(oversizedRepository.createOwned).not.toHaveBeenCalled();
+    expect(oversizedStorage.authorizeUpload).not.toHaveBeenCalled();
+    expect(quota.status).toBe(429);
+    expect(quota.body.error.code).toBe("rate_limit_exceeded");
+  });
+
+  it("rate limits inspection creation before issuing more upload URLs", async () => {
+    const repository = new FakeInspectionRepository();
+    const storage = new FakeStorage();
+    const app = inspectionApp(repository, storage);
+    const body = {
+      title: "Shift review",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "upload",
+        fileName: "line.webm",
+        contentType: "video/webm",
+        sizeBytes: 4096,
+      },
+    };
+
+    const responses = [];
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      responses.push(
+        await authenticated(
+          request(app).post("/api/inspections").set("Origin", appOrigin.origin),
+        ).send(body),
+      );
+    }
+
+    expect(responses.slice(0, 10).every(({ status }) => status === 201)).toBe(
+      true,
+    );
+    expect(responses[10]!.status).toBe(429);
+    expect(storage.authorizeUpload).toHaveBeenCalledTimes(10);
   });
 
   it("returns an empty owner-scoped history and rejects unbounded limits", async () => {
@@ -1192,6 +1294,22 @@ describe("inspection API", () => {
     expect(cancel.body.error.code).toBe("inspection_state_conflict");
     expect(retry.status).toBe(409);
     expect(retry.body.error.code).toBe("inspection_state_conflict");
+  });
+
+  it("does not retry failed work after the user reaches the active quota", async () => {
+    const repository = new FakeInspectionRepository();
+    repository.retryOwnedFailure.mockRejectedValueOnce(
+      new ActiveInspectionQuotaError(3),
+    );
+
+    const response = await authenticated(
+      request(inspectionApp(repository))
+        .post(`/api/inspections/${firstInspectionId}/retry`)
+        .set("Origin", appOrigin.origin),
+    ).send({});
+
+    expect(response.status).toBe(429);
+    expect(response.body.error.code).toBe("rate_limit_exceeded");
   });
 
   it("emits and validates an opaque stable pagination cursor", async () => {

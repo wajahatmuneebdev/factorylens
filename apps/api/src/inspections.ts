@@ -33,6 +33,7 @@ import type {
   UploadCompletionRecord,
 } from "./db/inspection-repository.js";
 import {
+  ActiveInspectionQuotaError,
   InspectionCommandConflictError,
   InspectionStateConflictError,
 } from "./db/inspection-repository.js";
@@ -41,6 +42,11 @@ import {
   readPredictionArtifact,
 } from "./prediction-export.js";
 import { authenticatedUser } from "./session.js";
+import {
+  DEFAULT_RATE_LIMITS,
+  rateLimit,
+  RequestRateLimiter,
+} from "./security.js";
 import {
   type ObjectAccessAuthorizer,
   type ObjectStorage,
@@ -69,7 +75,21 @@ export interface InspectionRouteDependencies {
   repository: InspectionApiRepository;
   storage: ObjectStorage;
   taskDispatcher: TaskDispatcher;
+  requestRateLimiter?: RequestRateLimiter;
+  policy?: InspectionPolicy;
 }
+
+export interface InspectionPolicy {
+  maxActiveInspections: number;
+  maxAttempts: number;
+  maxUploadBytes: number;
+}
+
+export const DEFAULT_INSPECTION_POLICY: InspectionPolicy = {
+  maxActiveInspections: 3,
+  maxAttempts: 3,
+  maxUploadBytes: 250 * 1024 * 1024,
+};
 
 function sendSafeError(
   response: Response,
@@ -214,96 +234,135 @@ export function registerInspectionRoutes(
   dependencies: InspectionRouteDependencies,
 ): void {
   const now = dependencies.now ?? (() => new Date());
+  const requestRateLimiter =
+    dependencies.requestRateLimiter ?? new RequestRateLimiter();
+  const policy = dependencies.policy ?? DEFAULT_INSPECTION_POLICY;
   app.use("/api/inspections", express.json({ limit: "16kb" }));
 
-  app.post("/api/inspections", async (request, response) => {
-    if (request.get("origin") !== dependencies.appOrigin.origin) {
-      sendSafeError(response, 403, {
-        code: "access_denied",
-        category: "authorization",
-        message: "The inspection request origin is not allowed.",
-      });
-      return;
-    }
-
-    const parsed = CreateInspectionRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      sendInvalidRequest(response, "The inspection request is invalid.");
-      return;
-    }
-
-    const id = randomUUID();
-    const directSource =
-      parsed.data.source.sourceType === "sample" ? null : parsed.data.source;
-    let inspection: InspectionRecord;
-    try {
-      inspection = await dependencies.repository.createOwned({
-        declaredContentType:
-          directSource?.contentType ?? PREPARED_SAMPLE.contentType,
-        declaredFileName: directSource?.fileName ?? PREPARED_SAMPLE.fileName,
-        declaredSizeBytes: directSource?.sizeBytes ?? null,
-        id,
-        ownerUserId: authenticatedUser(request).id,
-        sourceObjectKey:
-          parsed.data.source.sourceType === "sample"
-            ? PREPARED_SAMPLE.objectKey
-            : sourceObjectKey(id),
-        sourceType: parsed.data.source.sourceType,
-        title: parsed.data.title,
-        workflowKey: parsed.data.workflowKey,
-      });
-    } catch {
-      sendSafeError(response, 503, {
-        code: "provider_unavailable",
-        category: "retryable",
-        message: "Inspection creation is temporarily unavailable.",
-      });
-      return;
-    }
-
-    try {
-      if (!directSource) {
-        const metadata = await dependencies.storage.metadata(
-          inspection.sourceObjectKey,
-        );
-        const completion = await dependencies.repository.completeOwnedUpload(
-          authenticatedUser(request).id,
-          inspection.id,
-          metadata.sizeBytes,
-          now(),
-        );
-        if (!completion) throw new Error("Prepared sample inspection was lost");
-        const dispatched = await dispatchPendingJob(
-          dependencies,
-          authenticatedUser(request).id,
-          inspection.id,
-          completion,
-          now(),
-        );
-        response.status(201).json({
-          inspection: inspectionResponse(dispatched),
-          upload: null,
+  app.post(
+    "/api/inspections",
+    rateLimit(
+      requestRateLimiter,
+      "inspection-creation",
+      DEFAULT_RATE_LIMITS.inspectionCreation,
+      now,
+      true,
+    ),
+    async (request, response) => {
+      if (request.get("origin") !== dependencies.appOrigin.origin) {
+        sendSafeError(response, 403, {
+          code: "access_denied",
+          category: "authorization",
+          message: "The inspection request origin is not allowed.",
         });
         return;
       }
-      const upload = await dependencies.objectAccess.authorizeUpload(
-        inspection.sourceObjectKey,
-        directSource.contentType,
-      );
-      response.status(201).json({
-        inspection: inspectionResponse({ inspection, job: null }),
-        upload: upload
-          ? { ...upload, expiresAt: upload.expiresAt.toISOString() }
-          : null,
-      });
-    } catch {
-      sendSafeError(response, 503, {
-        code: "storage_unavailable",
-        category: "retryable",
-        message: "Upload authorization is temporarily unavailable.",
-      });
-    }
-  });
+
+      const parsed = CreateInspectionRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        sendInvalidRequest(response, "The inspection request is invalid.");
+        return;
+      }
+      if (
+        parsed.data.source.sourceType !== "sample" &&
+        parsed.data.source.sizeBytes > policy.maxUploadBytes
+      ) {
+        sendSafeError(response, 413, {
+          code: "invalid_media",
+          category: "terminal",
+          message: "The video exceeds the configured upload size limit.",
+        });
+        return;
+      }
+
+      const id = randomUUID();
+      const directSource =
+        parsed.data.source.sourceType === "sample" ? null : parsed.data.source;
+      let inspection: InspectionRecord;
+      try {
+        inspection = await dependencies.repository.createOwned(
+          {
+            declaredContentType:
+              directSource?.contentType ?? PREPARED_SAMPLE.contentType,
+            declaredFileName:
+              directSource?.fileName ?? PREPARED_SAMPLE.fileName,
+            declaredSizeBytes: directSource?.sizeBytes ?? null,
+            id,
+            ownerUserId: authenticatedUser(request).id,
+            sourceObjectKey:
+              parsed.data.source.sourceType === "sample"
+                ? PREPARED_SAMPLE.objectKey
+                : sourceObjectKey(id),
+            sourceType: parsed.data.source.sourceType,
+            title: parsed.data.title,
+            workflowKey: parsed.data.workflowKey,
+          },
+          policy.maxActiveInspections,
+        );
+      } catch (error) {
+        if (error instanceof ActiveInspectionQuotaError) {
+          sendSafeError(response, 429, {
+            code: "rate_limit_exceeded",
+            category: "retryable",
+            message:
+              "Finish or cancel an active inspection before starting another.",
+          });
+          return;
+        }
+        sendSafeError(response, 503, {
+          code: "provider_unavailable",
+          category: "retryable",
+          message: "Inspection creation is temporarily unavailable.",
+        });
+        return;
+      }
+
+      try {
+        if (!directSource) {
+          const metadata = await dependencies.storage.metadata(
+            inspection.sourceObjectKey,
+          );
+          const completion = await dependencies.repository.completeOwnedUpload(
+            authenticatedUser(request).id,
+            inspection.id,
+            metadata.sizeBytes,
+            now(),
+            policy.maxAttempts,
+          );
+          if (!completion)
+            throw new Error("Prepared sample inspection was lost");
+          const dispatched = await dispatchPendingJob(
+            dependencies,
+            authenticatedUser(request).id,
+            inspection.id,
+            completion,
+            now(),
+          );
+          response.status(201).json({
+            inspection: inspectionResponse(dispatched),
+            upload: null,
+          });
+          return;
+        }
+        const upload = await dependencies.objectAccess.authorizeUpload(
+          inspection.sourceObjectKey,
+          directSource.contentType,
+        );
+        response.status(201).json({
+          inspection: inspectionResponse({ inspection, job: null }),
+          upload: upload
+            ? { ...upload, expiresAt: upload.expiresAt.toISOString() }
+            : null,
+        });
+      } catch {
+        sendSafeError(response, 503, {
+          code: "storage_unavailable",
+          category: "retryable",
+          message: "Upload authorization is temporarily unavailable.",
+        });
+      }
+    },
+  );
 
   app.get("/api/inspections", async (request, response) => {
     const parsed = ListInspectionsQuerySchema.safeParse(request.query);
@@ -440,6 +499,14 @@ export function registerInspectionRoutes(
           });
           return;
         }
+        if (sizeBytes > policy.maxUploadBytes) {
+          sendSafeError(response, 413, {
+            code: "invalid_media",
+            category: "terminal",
+            message: "The uploaded video exceeds the configured size limit.",
+          });
+          return;
+        }
 
         try {
           completion = await dependencies.repository.completeOwnedUpload(
@@ -447,6 +514,7 @@ export function registerInspectionRoutes(
             path.data.id,
             sizeBytes,
             now(),
+            policy.maxAttempts,
           );
         } catch (error) {
           if (error instanceof InspectionStateConflictError) {
@@ -756,76 +824,96 @@ export function registerInspectionRoutes(
     }
   });
 
-  app.post("/api/inspections/:id/retry", async (request, response) => {
-    if (request.get("origin") !== dependencies.appOrigin.origin) {
-      sendSafeError(response, 403, {
-        code: "access_denied",
-        category: "authorization",
-        message: "The inspection request origin is not allowed.",
-      });
-      return;
-    }
-
-    const path = InspectionPathParamsSchema.safeParse(request.params);
-    const body = RetryInspectionRequestSchema.safeParse(request.body);
-    if (!path.success || !body.success) {
-      sendInvalidRequest(response, "The retry request is invalid.");
-      return;
-    }
-
-    const ownerUserId = authenticatedUser(request).id;
-    let completion: UploadCompletionRecord | null;
-    try {
-      completion = await dependencies.repository.retryOwnedFailure(
-        ownerUserId,
-        path.data.id,
-        now(),
-      );
-    } catch (error) {
-      if (error instanceof InspectionCommandConflictError) {
-        sendSafeError(response, 409, {
-          code: "inspection_state_conflict",
-          category: "terminal",
-          message: "This inspection cannot be retried.",
+  app.post(
+    "/api/inspections/:id/retry",
+    rateLimit(
+      requestRateLimiter,
+      "inspection-retry",
+      DEFAULT_RATE_LIMITS.inspectionRetry,
+      now,
+      true,
+    ),
+    async (request, response) => {
+      if (request.get("origin") !== dependencies.appOrigin.origin) {
+        sendSafeError(response, 403, {
+          code: "access_denied",
+          category: "authorization",
+          message: "The inspection request origin is not allowed.",
         });
         return;
       }
-      sendSafeError(response, 503, {
-        code: "provider_unavailable",
-        category: "retryable",
-        message: "Inspection retry is temporarily unavailable.",
-      });
-      return;
-    }
 
-    if (!completion) {
-      sendSafeError(response, 404, {
-        code: "inspection_not_found",
-        category: "terminal",
-        message: "Inspection not found.",
-      });
-      return;
-    }
+      const path = InspectionPathParamsSchema.safeParse(request.params);
+      const body = RetryInspectionRequestSchema.safeParse(request.body);
+      if (!path.success || !body.success) {
+        sendInvalidRequest(response, "The retry request is invalid.");
+        return;
+      }
 
-    try {
-      completion = await dispatchPendingJob(
-        dependencies,
-        ownerUserId,
-        path.data.id,
-        completion,
-        now(),
-      );
-    } catch {
-      sendSafeError(response, 503, {
-        code: "provider_unavailable",
-        category: "retryable",
-        message: "Processing dispatch is temporarily unavailable.",
-      });
-      return;
-    }
+      const ownerUserId = authenticatedUser(request).id;
+      let completion: UploadCompletionRecord | null;
+      try {
+        completion = await dependencies.repository.retryOwnedFailure(
+          ownerUserId,
+          path.data.id,
+          now(),
+          policy.maxActiveInspections,
+        );
+      } catch (error) {
+        if (error instanceof ActiveInspectionQuotaError) {
+          sendSafeError(response, 429, {
+            code: "rate_limit_exceeded",
+            category: "retryable",
+            message:
+              "Finish or cancel an active inspection before retrying another.",
+          });
+          return;
+        }
+        if (error instanceof InspectionCommandConflictError) {
+          sendSafeError(response, 409, {
+            code: "inspection_state_conflict",
+            category: "terminal",
+            message: "This inspection cannot be retried.",
+          });
+          return;
+        }
+        sendSafeError(response, 503, {
+          code: "provider_unavailable",
+          category: "retryable",
+          message: "Inspection retry is temporarily unavailable.",
+        });
+        return;
+      }
 
-    response.json({ inspection: inspectionResponse(completion) });
-  });
+      if (!completion) {
+        sendSafeError(response, 404, {
+          code: "inspection_not_found",
+          category: "terminal",
+          message: "Inspection not found.",
+        });
+        return;
+      }
+
+      try {
+        completion = await dispatchPendingJob(
+          dependencies,
+          ownerUserId,
+          path.data.id,
+          completion,
+          now(),
+        );
+      } catch {
+        sendSafeError(response, 503, {
+          code: "provider_unavailable",
+          category: "retryable",
+          message: "Processing dispatch is temporarily unavailable.",
+        });
+        return;
+      }
+
+      response.json({ inspection: inspectionResponse(completion) });
+    },
+  );
 
   const invalidBodyHandler: ErrorRequestHandler = (
     error,
