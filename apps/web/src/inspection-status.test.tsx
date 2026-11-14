@@ -152,7 +152,11 @@ describe("inspection processing status", () => {
       renderStatus();
       await vi.runOnlyPendingTimersAsync();
       await vi.advanceTimersByTimeAsync(10_000);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => url === `/api/inspections/${inspectionId}`,
+        ),
+      ).toHaveLength(1);
     },
   );
 

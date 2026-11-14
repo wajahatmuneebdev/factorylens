@@ -1005,6 +1005,61 @@ textarea:focus-visible {
   box-shadow: var(--shadow-sm);
 }
 
+.inspection-player {
+  align-self: start;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.inspection-player__stage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #101a17;
+}
+
+.inspection-player__stage video,
+.inspection-player__stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.inspection-player__stage video {
+  display: block;
+  object-fit: contain;
+}
+
+.inspection-player__stage canvas {
+  z-index: 1;
+  pointer-events: none;
+}
+
+.inspection-player__caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.inspection-player__caption .eyebrow {
+  margin-bottom: var(--space-1);
+}
+
+.inspection-player__caption > span {
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
 .media-placeholder__frame {
   display: grid;
   min-height: 28rem;
