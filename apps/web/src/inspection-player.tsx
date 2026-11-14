@@ -17,6 +17,13 @@ const CLASS_COLORS = {
 const MAX_PREDICTION_BYTES = 32 * 1024 * 1024;
 
 type PredictionFrame = PredictionArtifactV1["frames"][number];
+type PredictionEvent = PredictionArtifactV1["events"][number];
+type PredictionClass = PredictionArtifactV1["classes"][number];
+
+export interface InvestigationFilters {
+  confidence: number;
+  enabledClasses: ReadonlySet<PredictionClass>;
+}
 
 class PlayerRequestError extends Error {}
 
@@ -51,6 +58,43 @@ export function selectPredictionFrame(
   return timestampMs - before.timestampMs <= after.timestampMs - timestampMs
     ? before
     : after;
+}
+
+export function filterPredictionFrame(
+  frame: PredictionFrame | null,
+  filters: InvestigationFilters,
+): PredictionFrame | null {
+  if (!frame) return null;
+  return {
+    ...frame,
+    predictions: frame.predictions.filter(
+      (prediction) =>
+        filters.enabledClasses.has(prediction.className) &&
+        prediction.confidence >= filters.confidence,
+    ),
+  };
+}
+
+export function filterPredictionEvents(
+  events: PredictionArtifactV1["events"],
+  filters: InvestigationFilters,
+): PredictionArtifactV1["events"] {
+  if (!filters.enabledClasses.has("NO-Hardhat")) return [];
+  return events.filter((event) => event.peakConfidence >= filters.confidence);
+}
+
+export function eventTimelinePosition(
+  event: PredictionEvent,
+  durationMs: number,
+) {
+  return {
+    leftPercent: (event.startMs / durationMs) * 100,
+    widthPercent: ((event.endMs - event.startMs) / durationMs) * 100,
+  };
+}
+
+export function seekToEvent(video: HTMLVideoElement, event: PredictionEvent) {
+  video.currentTime = event.startMs / 1000;
 }
 
 export function calculateCoordinateTransform(
@@ -331,7 +375,7 @@ function drawOverlay(
   }
 }
 
-function PredictionVideo({
+export function PredictionVideo({
   artifact,
   videoUrl,
 }: {
@@ -345,15 +389,35 @@ function PredictionVideo({
     selectPredictionFrame(artifact.frames, 0),
   );
   const frameRef = useRef(frame);
+  const [confidencePercent, setConfidencePercent] = useState(50);
+  const [enabledClasses, setEnabledClasses] = useState<Set<PredictionClass>>(
+    () => new Set(artifact.classes),
+  );
+  const [selectedEvent, setSelectedEvent] = useState<PredictionEvent | null>(
+    null,
+  );
+  const filters: InvestigationFilters = {
+    confidence: confidencePercent / 100,
+    enabledClasses,
+  };
+  const filteredFrame = filterPredictionFrame(frame, filters);
+  const visibleEvents = filterPredictionEvents(artifact.events, filters);
+  const selectedVisibleEvent = visibleEvents.find(
+    (event) => event.id === selectedEvent?.id,
+  );
 
   const renderTimestamp = useCallback(
     (timestampMs: number) => {
       const selected = selectPredictionFrame(artifact.frames, timestampMs);
-      frameRef.current = selected;
+      const visible = filterPredictionFrame(selected, {
+        confidence: confidencePercent / 100,
+        enabledClasses,
+      });
+      frameRef.current = visible;
       setFrame(selected);
-      if (canvasRef.current) drawOverlay(canvasRef.current, artifact, selected);
+      if (canvasRef.current) drawOverlay(canvasRef.current, artifact, visible);
     },
-    [artifact],
+    [artifact, confidencePercent, enabledClasses],
   );
 
   useEffect(() => {
@@ -377,6 +441,30 @@ function PredictionVideo({
     return () => observer.disconnect();
   }, [artifact]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    frameRef.current = filteredFrame;
+    drawOverlay(canvas, artifact, filteredFrame);
+  }, [artifact, filteredFrame]);
+
+  function toggleClass(className: PredictionClass) {
+    setEnabledClasses((current) => {
+      const next = new Set(current);
+      if (next.has(className)) next.delete(className);
+      else next.add(className);
+      return next;
+    });
+  }
+
+  function selectEvent(event: PredictionEvent) {
+    const video = videoRef.current;
+    if (!video) return;
+    seekToEvent(video, event);
+    renderTimestamp(event.startMs);
+    setSelectedEvent(event);
+  }
+
   return (
     <section aria-labelledby="playback-title" className="inspection-player">
       <div
@@ -395,8 +483,8 @@ function PredictionVideo({
         <div>
           <p className="eyebrow">Synchronized playback</p>
           <strong id="playback-title">
-            {frame
-              ? `${frame.predictions.length} prediction${frame.predictions.length === 1 ? "" : "s"} at ${(frame.timestampMs / 1000).toFixed(1)}s`
+            {filteredFrame
+              ? `${filteredFrame.predictions.length} visible prediction${filteredFrame.predictions.length === 1 ? "" : "s"} at ${(filteredFrame.timestampMs / 1000).toFixed(1)}s`
               : "No sampled predictions"}
           </strong>
         </div>
@@ -404,6 +492,102 @@ function PredictionVideo({
           {artifact.source.width} × {artifact.source.height}
         </span>
       </div>
+      <div className="investigation-controls">
+        <fieldset className="class-filters">
+          <legend>Visible classes</legend>
+          {artifact.classes.map((className) => (
+            <label key={className}>
+              <input
+                checked={enabledClasses.has(className)}
+                onChange={() => toggleClass(className)}
+                type="checkbox"
+              />
+              <span
+                aria-hidden="true"
+                className="class-filter__swatch"
+                style={{ background: CLASS_COLORS[className] }}
+              />
+              {className}
+            </label>
+          ))}
+        </fieldset>
+        <label className="confidence-filter">
+          <span>
+            Minimum confidence <strong>{confidencePercent}%</strong>
+          </span>
+          <input
+            aria-label="Minimum confidence"
+            max="100"
+            min="0"
+            onChange={(event) =>
+              setConfidencePercent(Number(event.currentTarget.value))
+            }
+            step="1"
+            type="range"
+            value={confidencePercent}
+          />
+        </label>
+      </div>
+      <section
+        aria-labelledby="event-timeline-title"
+        className="event-timeline"
+      >
+        <div className="event-timeline__heading">
+          <div>
+            <p className="eyebrow">Incident navigation</p>
+            <h3 id="event-timeline-title">Missing hard hat events</h3>
+          </div>
+          <strong aria-live="polite">
+            {visibleEvents.length} of {artifact.events.length} visible
+          </strong>
+        </div>
+        <div className="event-timeline__track" data-testid="event-timeline">
+          {visibleEvents.map((event) => {
+            const position = eventTimelinePosition(
+              event,
+              artifact.source.durationMs,
+            );
+            return (
+              <button
+                aria-label={`${event.label} at ${(event.startMs / 1000).toFixed(1)} seconds`}
+                aria-pressed={selectedVisibleEvent?.id === event.id}
+                className="event-timeline__event"
+                key={event.id}
+                onClick={() => selectEvent(event)}
+                style={{
+                  left: `${position.leftPercent}%`,
+                  width: `${position.widthPercent}%`,
+                }}
+                type="button"
+              />
+            );
+          })}
+        </div>
+        <div className="event-timeline__scale" aria-hidden="true">
+          <span>0:00</span>
+          <span>{(artifact.source.durationMs / 1000).toFixed(1)}s</span>
+        </div>
+        {artifact.events.length === 0 ? (
+          <p className="event-timeline__empty">
+            No documented events were found in this inspection.
+          </p>
+        ) : visibleEvents.length === 0 ? (
+          <p className="event-timeline__empty">
+            No events match the current class and confidence filters.
+          </p>
+        ) : null}
+        {selectedVisibleEvent ? (
+          <div className="event-context" role="status">
+            <strong>{selectedVisibleEvent.label}</strong>
+            <span>
+              {(selectedVisibleEvent.startMs / 1000).toFixed(1)}s–
+              {(selectedVisibleEvent.endMs / 1000).toFixed(1)}s · peak
+              confidence {Math.round(selectedVisibleEvent.peakConfidence * 100)}
+              % · {selectedVisibleEvent.qualifyingFrameCount} qualifying frames
+            </span>
+          </div>
+        ) : null}
+      </section>
     </section>
   );
 }

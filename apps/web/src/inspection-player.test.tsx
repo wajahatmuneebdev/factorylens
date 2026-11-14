@@ -6,11 +6,17 @@ import {
   PredictionArtifactV1Schema,
   type PredictionArtifactV1,
 } from "@factorylens/contracts";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   calculateCoordinateTransform,
+  eventTimelinePosition,
+  filterPredictionEvents,
+  filterPredictionFrame,
   loadInspectionPlayback,
+  PredictionVideo,
+  seekToEvent,
   selectPredictionFrame,
   synchronizeVideo,
 } from "./inspection-player";
@@ -49,6 +55,153 @@ describe("prediction frame selection", () => {
     expect(
       selectPredictionFrame(fixture.frames, 650)?.predictions,
     ).toHaveLength(0);
+  });
+});
+
+describe("local investigation filters", () => {
+  it("filters classes and includes predictions and events on the confidence boundary", () => {
+    const fixture = readFixture();
+    const allClasses = new Set(fixture.classes);
+
+    expect(
+      filterPredictionFrame(fixture.frames[0]!, {
+        confidence: 0.91,
+        enabledClasses: allClasses,
+      })?.predictions,
+    ).toHaveLength(1);
+    expect(
+      filterPredictionFrame(fixture.frames[0]!, {
+        confidence: 0.911,
+        enabledClasses: allClasses,
+      })?.predictions,
+    ).toHaveLength(0);
+    expect(
+      filterPredictionEvents(fixture.events, {
+        confidence: 0.93,
+        enabledClasses: allClasses,
+      }),
+    ).toHaveLength(1);
+    expect(
+      filterPredictionEvents(fixture.events, {
+        confidence: 0,
+        enabledClasses: new Set(["Person", "Hardhat"]),
+      }),
+    ).toHaveLength(0);
+  });
+
+  it("handles empty frames and events", () => {
+    expect(
+      filterPredictionFrame(null, {
+        confidence: 0.5,
+        enabledClasses: new Set(),
+      }),
+    ).toBeNull();
+    expect(
+      filterPredictionEvents([], {
+        confidence: 0.5,
+        enabledClasses: new Set(["NO-Hardhat"]),
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("event timeline", () => {
+  it("scales event ranges against the complete inspection duration", () => {
+    const event = {
+      ...readFixture().events[0]!,
+      startMs: 250,
+      endMs: 750,
+    };
+
+    expect(eventTimelinePosition(event, 1_000)).toEqual({
+      leftPercent: 25,
+      widthPercent: 50,
+    });
+  });
+
+  it("seeks video to an event start", () => {
+    const video = document.createElement("video");
+
+    seekToEvent(video, { ...readFixture().events[0]!, startMs: 400 });
+
+    expect(video.currentTime).toBe(0.4);
+  });
+
+  it("keeps filters, visible counts, markers, and selected context in sync locally", () => {
+    const fixture = readFixture();
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    const { container } = render(
+      <PredictionVideo artifact={fixture} videoUrl="video.webm" />,
+    );
+
+    expect(screen.getByLabelText("Person")).toBeChecked();
+    expect(screen.getByLabelText("Hardhat")).toBeChecked();
+    expect(screen.getByLabelText("NO-Hardhat")).toBeChecked();
+    expect(screen.getByLabelText("Minimum confidence")).toHaveValue("50");
+    expect(screen.getByText("1 of 1 visible")).toBeInTheDocument();
+    expect(
+      screen.getByText(/1 visible prediction at 0.0s/),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Minimum confidence"), {
+      target: { value: "92" },
+    });
+    expect(
+      screen.getByText(/0 visible predictions at 0.0s/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 visible")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Minimum confidence"), {
+      target: { value: "94" },
+    });
+    expect(screen.getByText("0 of 1 visible")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No events match the current class and confidence filters.",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Minimum confidence"), {
+      target: { value: "50" },
+    });
+    const marker = screen.getByRole("button", {
+      name: "Missing hard hat at 0.0 seconds",
+    });
+    fireEvent.click(marker);
+
+    expect(marker).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "0.0s–1.0s · peak confidence 93% · 3 qualifying frames",
+    );
+    expect(container.querySelector("video")?.currentTime).toBe(0);
+
+    fireEvent.click(screen.getByLabelText("NO-Hardhat"));
+    expect(screen.getByText("0 of 1 visible")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a useful empty state when the artifact has no predictions or events", () => {
+    const fixture = readFixture();
+    const emptyArtifact: PredictionArtifactV1 = {
+      ...fixture,
+      frames: [],
+      events: [],
+      summary: {
+        missingHardHatEventCount: 0,
+        peakConfidence: null,
+        qualifyingFrameCount: 0,
+      },
+    };
+
+    render(<PredictionVideo artifact={emptyArtifact} videoUrl="video.webm" />);
+
+    expect(screen.getByText("No sampled predictions")).toBeInTheDocument();
+    expect(screen.getByText("0 of 0 visible")).toBeInTheDocument();
+    expect(
+      screen.getByText("No documented events were found in this inspection."),
+    ).toBeInTheDocument();
   });
 });
 
