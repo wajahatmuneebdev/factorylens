@@ -6,7 +6,13 @@ import {
   PredictionArtifactV1Schema,
   type PredictionArtifactV1,
 } from "@factorylens/contracts";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -14,6 +20,7 @@ import {
   eventTimelinePosition,
   filterPredictionEvents,
   filterPredictionFrame,
+  InspectionResultSummary,
   loadInspectionPlayback,
   PredictionVideo,
   seekToEvent,
@@ -33,6 +40,7 @@ function readFixture(): PredictionArtifactV1 {
 }
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -293,6 +301,156 @@ describe("authorized playback loading", () => {
     await expect(
       loadInspectionPlayback(readFixture().inspectionId),
     ).rejects.toThrow("unsupported prediction format");
+  });
+
+  it("reports a committed inspection whose artifact is missing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            category: "retryable",
+            code: "storage_unavailable",
+            message: "Inspection artifacts are temporarily unavailable.",
+          },
+        }),
+        { status: 503 },
+      ),
+    );
+
+    await expect(
+      loadInspectionPlayback(readFixture().inspectionId),
+    ).rejects.toThrow("Inspection artifacts are temporarily unavailable.");
+  });
+});
+
+describe("completed result summary and exports", () => {
+  function artifactAuthorization() {
+    return new Response(
+      JSON.stringify({
+        video: {
+          expiresAt: "2026-11-13T09:00:00.000Z",
+          url: "https://objects.example/video",
+        },
+        predictions: {
+          expiresAt: "2026-11-13T09:00:00.000Z",
+          url: "https://objects.example/predictions",
+        },
+        predictionSchemaVersion: 1,
+      }),
+      { status: 200 },
+    );
+  }
+
+  function installDownloadSpies() {
+    const downloads: string[] = [];
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:factorylens-export");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloads.push(this.download);
+    });
+    return downloads;
+  }
+
+  it("shows approved artifact aggregates, media metadata, and Workflow qualification", () => {
+    render(<InspectionResultSummary artifact={readFixture()} />);
+
+    expect(
+      screen.getByRole("heading", { name: "Inspection summary" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Workflow events").nextSibling).toHaveTextContent(
+      "1",
+    );
+    expect(screen.getByText("Qualifying frames").nextSibling).toHaveTextContent(
+      "3",
+    );
+    expect(screen.getByText("Peak confidence").nextSibling).toHaveTextContent(
+      "93%",
+    );
+    expect(screen.getByText("1280 × 720")).toBeInTheDocument();
+    expect(screen.getByText("5 fps")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Review the recording before drawing a safety conclusion/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("describes a no-detection result without making a safety conclusion", () => {
+    const fixture = readFixture();
+    render(
+      <InspectionResultSummary
+        artifact={{
+          ...fixture,
+          events: [],
+          frames: [],
+          summary: {
+            missingHardHatEventCount: 0,
+            peakConfidence: null,
+            qualifyingFrameCount: 0,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /no documented missing-hard-hat events.*not a safety conclusion/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("downloads JSON and CSV through authorized endpoints with meaningful filenames", async () => {
+    const fixture = readFixture();
+    const downloads = installDownloadSpies();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(artifactAuthorization())
+      .mockResolvedValueOnce(
+        new Response(gzipSync(JSON.stringify(fixture)), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response("inspection_id,timestamp_ms\n", { status: 200 }),
+      );
+    render(<InspectionResultSummary artifact={fixture} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Download JSON" }));
+    expect(
+      screen.getByRole("button", { name: "Preparing JSON…" }),
+    ).toBeDisabled();
+    expect(await screen.findByText("JSON export ready")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
+    expect(await screen.findByText("CSV export ready")).toBeInTheDocument();
+
+    expect(fetchMock.mock.calls).toEqual([
+      [`/api/inspections/${fixture.inspectionId}/artifacts`],
+      ["https://objects.example/predictions"],
+      [`/api/inspections/${fixture.inspectionId}/export.csv`],
+    ]);
+    expect(downloads).toEqual([
+      `factorylens-${fixture.inspectionId}-results.json.gz`,
+      `factorylens-${fixture.inspectionId}-results.csv`,
+    ]);
+  });
+
+  it("shows expired JSON authorization as a retryable export failure", async () => {
+    const fixture = readFixture();
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(artifactAuthorization())
+      .mockResolvedValueOnce(new Response(null, { status: 403 }));
+    render(<InspectionResultSummary artifact={fixture} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Download JSON" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "The JSON download authorization expired. Try the export again.",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Download JSON" })).toBeEnabled();
   });
 });
 

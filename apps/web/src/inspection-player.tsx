@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { PageState } from "./components/PageState";
+import { Button, Notification } from "./components/ui";
 
 const CLASS_COLORS = {
   Hardhat: "#65d6ad",
@@ -26,6 +27,8 @@ export interface InvestigationFilters {
 }
 
 class PlayerRequestError extends Error {}
+
+type ExportFormat = "csv" | "json";
 
 export interface CoordinateTransform {
   canvasHeight: number;
@@ -251,6 +254,200 @@ export async function loadInspectionPlayback(inspectionId: string) {
   };
 }
 
+function exportFilename(inspectionId: string, format: ExportFormat) {
+  return `factorylens-${inspectionId}-results.${format === "json" ? "json.gz" : "csv"}`;
+}
+
+function saveDownload(contents: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(contents);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export async function downloadInspectionExport(
+  inspectionId: string,
+  format: ExportFormat,
+) {
+  let response: Response;
+  if (format === "json") {
+    const authorizationResponse = await fetch(
+      `/api/inspections/${inspectionId}/artifacts`,
+    );
+    if (!authorizationResponse.ok) {
+      throw new PlayerRequestError(
+        await responseMessage(
+          authorizationResponse,
+          "JSON export authorization is temporarily unavailable.",
+        ),
+      );
+    }
+    const authorization = GetArtifactsResponseSchema.safeParse(
+      await authorizationResponse.json().catch(() => null),
+    );
+    if (!authorization.success) {
+      throw new PlayerRequestError("JSON export authorization is invalid.");
+    }
+    response = await fetch(authorization.data.predictions.url);
+    if (!response.ok) {
+      throw new PlayerRequestError(
+        response.status === 401 || response.status === 403
+          ? "The JSON download authorization expired. Try the export again."
+          : "The JSON export could not be downloaded.",
+      );
+    }
+  } else {
+    response = await fetch(`/api/inspections/${inspectionId}/export.csv`);
+    if (!response.ok) {
+      throw new PlayerRequestError(
+        await responseMessage(
+          response,
+          "The CSV export could not be downloaded.",
+        ),
+      );
+    }
+  }
+
+  saveDownload(await response.blob(), exportFilename(inspectionId, format));
+}
+
+function formatDuration(durationMs: number) {
+  const totalSeconds = durationMs / 1000;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds - minutes * 60;
+  return minutes > 0
+    ? `${minutes}m ${seconds.toFixed(seconds % 1 === 0 ? 0 : 1)}s`
+    : `${seconds.toFixed(seconds % 1 === 0 ? 0 : 1)}s`;
+}
+
+export function InspectionResultSummary({
+  artifact,
+}: {
+  artifact: PredictionArtifactV1;
+}) {
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+  const [exportResult, setExportResult] = useState<{
+    format: ExportFormat;
+    kind: "error" | "success";
+    message: string;
+  } | null>(null);
+
+  async function download(format: ExportFormat) {
+    setExportResult(null);
+    setExporting(format);
+    try {
+      await downloadInspectionExport(artifact.inspectionId, format);
+      setExportResult({
+        format,
+        kind: "success",
+        message: `${format.toUpperCase()} export downloaded.`,
+      });
+    } catch (error) {
+      setExportResult({
+        format,
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : `The ${format.toUpperCase()} export could not be downloaded.`,
+      });
+    } finally {
+      setExporting(null);
+    }
+  }
+
+  return (
+    <section aria-labelledby="result-summary-title" className="result-summary">
+      <div className="result-summary__heading">
+        <div>
+          <p className="eyebrow">Committed result</p>
+          <h2 id="result-summary-title">Inspection summary</h2>
+        </div>
+        <span>Contract v{artifact.schemaVersion}</span>
+      </div>
+      <p className="result-summary__qualification">
+        {artifact.summary.missingHardHatEventCount === 0
+          ? "This Workflow produced no documented missing-hard-hat events. This result is model output, not a safety conclusion."
+          : `This Workflow produced ${artifact.summary.missingHardHatEventCount} documented missing-hard-hat ${artifact.summary.missingHardHatEventCount === 1 ? "event" : "events"}. Review the recording before drawing a safety conclusion.`}
+      </p>
+      <dl className="result-summary__metrics">
+        <div>
+          <dt>Workflow events</dt>
+          <dd>{artifact.summary.missingHardHatEventCount}</dd>
+        </div>
+        <div>
+          <dt>Qualifying frames</dt>
+          <dd>{artifact.summary.qualifyingFrameCount}</dd>
+        </div>
+        <div>
+          <dt>Peak confidence</dt>
+          <dd>
+            {artifact.summary.peakConfidence === null
+              ? "Not available"
+              : `${Math.round(artifact.summary.peakConfidence * 100)}%`}
+          </dd>
+        </div>
+      </dl>
+      <dl className="result-summary__metadata">
+        <div>
+          <dt>Duration</dt>
+          <dd>{formatDuration(artifact.source.durationMs)}</dd>
+        </div>
+        <div>
+          <dt>Resolution</dt>
+          <dd>
+            {artifact.source.width} × {artifact.source.height}
+          </dd>
+        </div>
+        <div>
+          <dt>Sample rate</dt>
+          <dd>{artifact.source.sampleRateFps} fps</dd>
+        </div>
+        <div>
+          <dt>Workflow</dt>
+          <dd>{artifact.workflow.key}</dd>
+        </div>
+      </dl>
+      <div className="result-summary__exports">
+        <div>
+          <h3>Export structured results</h3>
+          <p>
+            JSON preserves the complete committed artifact. CSV contains one row
+            per frame prediction.
+          </p>
+        </div>
+        <div className="result-summary__actions">
+          <Button
+            disabled={exporting !== null}
+            onClick={() => void download("json")}
+          >
+            {exporting === "json" ? "Preparing JSON…" : "Download JSON"}
+          </Button>
+          <Button
+            disabled={exporting !== null}
+            onClick={() => void download("csv")}
+            variant="secondary"
+          >
+            {exporting === "csv" ? "Preparing CSV…" : "Download CSV"}
+          </Button>
+        </div>
+      </div>
+      {exportResult ? (
+        <Notification tone={exportResult.kind}>
+          <strong>
+            {exportResult.kind === "success"
+              ? `${exportResult.format.toUpperCase()} export ready`
+              : `${exportResult.format.toUpperCase()} export failed`}
+          </strong>
+          <span>{exportResult.message}</span>
+        </Notification>
+      ) : null}
+    </section>
+  );
+}
+
 type VideoWithFrameCallback = HTMLVideoElement & {
   cancelVideoFrameCallback?: (handle: number) => void;
   requestVideoFrameCallback?: (
@@ -466,129 +663,133 @@ export function PredictionVideo({
   }
 
   return (
-    <section aria-labelledby="playback-title" className="inspection-player">
-      <div
-        className="inspection-player__stage"
-        ref={stageRef}
-        style={{
-          aspectRatio: `${artifact.source.width} / ${artifact.source.height}`,
-        }}
-      >
-        <video controls playsInline ref={videoRef} src={videoUrl}>
-          Your browser does not support HTML video playback.
-        </video>
-        <canvas aria-hidden="true" ref={canvasRef} />
-      </div>
-      <div className="inspection-player__caption">
-        <div>
-          <p className="eyebrow">Synchronized playback</p>
-          <strong id="playback-title">
-            {filteredFrame
-              ? `${filteredFrame.predictions.length} visible prediction${filteredFrame.predictions.length === 1 ? "" : "s"} at ${(filteredFrame.timestampMs / 1000).toFixed(1)}s`
-              : "No sampled predictions"}
-          </strong>
+    <div className="inspection-results">
+      <section aria-labelledby="playback-title" className="inspection-player">
+        <div
+          className="inspection-player__stage"
+          ref={stageRef}
+          style={{
+            aspectRatio: `${artifact.source.width} / ${artifact.source.height}`,
+          }}
+        >
+          <video controls playsInline ref={videoRef} src={videoUrl}>
+            Your browser does not support HTML video playback.
+          </video>
+          <canvas aria-hidden="true" ref={canvasRef} />
         </div>
-        <span>
-          {artifact.source.width} × {artifact.source.height}
-        </span>
-      </div>
-      <div className="investigation-controls">
-        <fieldset className="class-filters">
-          <legend>Visible classes</legend>
-          {artifact.classes.map((className) => (
-            <label key={className}>
-              <input
-                checked={enabledClasses.has(className)}
-                onChange={() => toggleClass(className)}
-                type="checkbox"
-              />
-              <span
-                aria-hidden="true"
-                className="class-filter__swatch"
-                style={{ background: CLASS_COLORS[className] }}
-              />
-              {className}
-            </label>
-          ))}
-        </fieldset>
-        <label className="confidence-filter">
-          <span>
-            Minimum confidence <strong>{confidencePercent}%</strong>
-          </span>
-          <input
-            aria-label="Minimum confidence"
-            max="100"
-            min="0"
-            onChange={(event) =>
-              setConfidencePercent(Number(event.currentTarget.value))
-            }
-            step="1"
-            type="range"
-            value={confidencePercent}
-          />
-        </label>
-      </div>
-      <section
-        aria-labelledby="event-timeline-title"
-        className="event-timeline"
-      >
-        <div className="event-timeline__heading">
+        <div className="inspection-player__caption">
           <div>
-            <p className="eyebrow">Incident navigation</p>
-            <h3 id="event-timeline-title">Missing hard hat events</h3>
+            <p className="eyebrow">Synchronized playback</p>
+            <strong id="playback-title">
+              {filteredFrame
+                ? `${filteredFrame.predictions.length} visible prediction${filteredFrame.predictions.length === 1 ? "" : "s"} at ${(filteredFrame.timestampMs / 1000).toFixed(1)}s`
+                : "No sampled predictions"}
+            </strong>
           </div>
-          <strong aria-live="polite">
-            {visibleEvents.length} of {artifact.events.length} visible
-          </strong>
+          <span>
+            {artifact.source.width} × {artifact.source.height}
+          </span>
         </div>
-        <div className="event-timeline__track" data-testid="event-timeline">
-          {visibleEvents.map((event) => {
-            const position = eventTimelinePosition(
-              event,
-              artifact.source.durationMs,
-            );
-            return (
-              <button
-                aria-label={`${event.label} at ${(event.startMs / 1000).toFixed(1)} seconds`}
-                aria-pressed={selectedVisibleEvent?.id === event.id}
-                className="event-timeline__event"
-                key={event.id}
-                onClick={() => selectEvent(event)}
-                style={{
-                  left: `${position.leftPercent}%`,
-                  width: `${position.widthPercent}%`,
-                }}
-                type="button"
-              />
-            );
-          })}
-        </div>
-        <div className="event-timeline__scale" aria-hidden="true">
-          <span>0:00</span>
-          <span>{(artifact.source.durationMs / 1000).toFixed(1)}s</span>
-        </div>
-        {artifact.events.length === 0 ? (
-          <p className="event-timeline__empty">
-            No documented events were found in this inspection.
-          </p>
-        ) : visibleEvents.length === 0 ? (
-          <p className="event-timeline__empty">
-            No events match the current class and confidence filters.
-          </p>
-        ) : null}
-        {selectedVisibleEvent ? (
-          <div className="event-context" role="status">
-            <strong>{selectedVisibleEvent.label}</strong>
+        <div className="investigation-controls">
+          <fieldset className="class-filters">
+            <legend>Visible classes</legend>
+            {artifact.classes.map((className) => (
+              <label key={className}>
+                <input
+                  checked={enabledClasses.has(className)}
+                  onChange={() => toggleClass(className)}
+                  type="checkbox"
+                />
+                <span
+                  aria-hidden="true"
+                  className="class-filter__swatch"
+                  style={{ background: CLASS_COLORS[className] }}
+                />
+                {className}
+              </label>
+            ))}
+          </fieldset>
+          <label className="confidence-filter">
             <span>
-              {(selectedVisibleEvent.startMs / 1000).toFixed(1)}s–
-              {(selectedVisibleEvent.endMs / 1000).toFixed(1)}s · peak
-              confidence {Math.round(selectedVisibleEvent.peakConfidence * 100)}
-              % · {selectedVisibleEvent.qualifyingFrameCount} qualifying frames
+              Minimum confidence <strong>{confidencePercent}%</strong>
             </span>
+            <input
+              aria-label="Minimum confidence"
+              max="100"
+              min="0"
+              onChange={(event) =>
+                setConfidencePercent(Number(event.currentTarget.value))
+              }
+              step="1"
+              type="range"
+              value={confidencePercent}
+            />
+          </label>
+        </div>
+        <section
+          aria-labelledby="event-timeline-title"
+          className="event-timeline"
+        >
+          <div className="event-timeline__heading">
+            <div>
+              <p className="eyebrow">Incident navigation</p>
+              <h3 id="event-timeline-title">Missing hard hat events</h3>
+            </div>
+            <strong aria-live="polite">
+              {visibleEvents.length} of {artifact.events.length} visible
+            </strong>
           </div>
-        ) : null}
+          <div className="event-timeline__track" data-testid="event-timeline">
+            {visibleEvents.map((event) => {
+              const position = eventTimelinePosition(
+                event,
+                artifact.source.durationMs,
+              );
+              return (
+                <button
+                  aria-label={`${event.label} at ${(event.startMs / 1000).toFixed(1)} seconds`}
+                  aria-pressed={selectedVisibleEvent?.id === event.id}
+                  className="event-timeline__event"
+                  key={event.id}
+                  onClick={() => selectEvent(event)}
+                  style={{
+                    left: `${position.leftPercent}%`,
+                    width: `${position.widthPercent}%`,
+                  }}
+                  type="button"
+                />
+              );
+            })}
+          </div>
+          <div className="event-timeline__scale" aria-hidden="true">
+            <span>0:00</span>
+            <span>{(artifact.source.durationMs / 1000).toFixed(1)}s</span>
+          </div>
+          {artifact.events.length === 0 ? (
+            <p className="event-timeline__empty">
+              No documented events were found in this inspection.
+            </p>
+          ) : visibleEvents.length === 0 ? (
+            <p className="event-timeline__empty">
+              No events match the current class and confidence filters.
+            </p>
+          ) : null}
+          {selectedVisibleEvent ? (
+            <div className="event-context" role="status">
+              <strong>{selectedVisibleEvent.label}</strong>
+              <span>
+                {(selectedVisibleEvent.startMs / 1000).toFixed(1)}s–
+                {(selectedVisibleEvent.endMs / 1000).toFixed(1)}s · peak
+                confidence{" "}
+                {Math.round(selectedVisibleEvent.peakConfidence * 100)}% ·{" "}
+                {selectedVisibleEvent.qualifyingFrameCount} qualifying frames
+              </span>
+            </div>
+          ) : null}
+        </section>
       </section>
-    </section>
+      <InspectionResultSummary artifact={artifact} />
+    </div>
   );
 }
 
