@@ -27,8 +27,8 @@
     "build": "npm run build --workspace @factorylens/contracts && npm run build --workspace @factorylens/web && npm run build --workspace @factorylens/api",
     "typecheck": "npm run build --workspace @factorylens/contracts && npm run typecheck --workspaces --if-present && uv run --project apps/worker mypy --config-file apps/worker/pyproject.toml apps/worker/src apps/worker/tests",
     "lint": "eslint . && markdownlint-cli2 \"*.md\" \".github/**/*.md\" && uv run --project apps/worker ruff check apps/worker/src apps/worker/tests",
-    "format": "prettier --write package.json package-lock.json eslint.config.js tsconfig.base.json apps/web apps/api packages/contracts && uv run --project apps/worker ruff format apps/worker/src apps/worker/tests",
-    "format:check": "prettier --check package.json package-lock.json eslint.config.js tsconfig.base.json apps/web apps/api packages/contracts && uv run --project apps/worker ruff format --check apps/worker/src apps/worker/tests",
+    "format": "prettier --write package.json package-lock.json eslint.config.js tsconfig.base.json apps/web apps/api packages/contracts operations && uv run --project apps/worker ruff format apps/worker/src apps/worker/tests",
+    "format:check": "prettier --check package.json package-lock.json eslint.config.js tsconfig.base.json apps/web apps/api packages/contracts operations && uv run --project apps/worker ruff format --check apps/worker/src apps/worker/tests",
     "test": "npm run build --workspace @factorylens/contracts && npm run test --workspaces --if-present && uv run --project apps/worker pytest -c apps/worker/pyproject.toml apps/worker/tests",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build"
   },

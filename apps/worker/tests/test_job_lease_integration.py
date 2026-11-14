@@ -38,6 +38,14 @@ pytestmark = [
 ]
 
 
+def task_message(job_id: UUID, dispatch_generation: int = 1) -> ProcessTaskMessage:
+    return ProcessTaskMessage(
+        correlationId=job_id,
+        dispatchGeneration=dispatch_generation,
+        jobId=job_id,
+    )
+
+
 @pytest.fixture
 def queued_job() -> Iterator[UUID]:
     assert database_url is not None
@@ -99,7 +107,7 @@ def queued_job() -> Iterator[UUID]:
 def test_only_one_simultaneous_delivery_acquires_the_job(queued_job: UUID) -> None:
     assert database_url is not None
     store = PostgresJobLeaseStore(database_url)
-    message = ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    message = task_message(queued_job)
     barrier = Barrier(2)
 
     def acquire() -> LeaseOutcome:
@@ -115,7 +123,7 @@ def test_only_one_simultaneous_delivery_acquires_the_job(queued_job: UUID) -> No
 def test_progress_requires_the_current_lease_token(queued_job: UUID) -> None:
     assert database_url is not None
     store = PostgresJobLeaseStore(database_url)
-    decision = store.acquire(ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1))
+    decision = store.acquire(task_message(queued_job))
     assert decision.lease is not None
 
     assert not store.record_progress(queued_job, uuid4(), "download", 10)
@@ -127,9 +135,7 @@ def test_cancellation_checkpoint_atomically_finishes_both_states(
 ) -> None:
     assert database_url is not None
     store = PostgresJobLeaseStore(database_url)
-    lease = store.acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    ).lease
+    lease = store.acquire(task_message(queued_job)).lease
     assert lease is not None
     with psycopg.connect(database_url) as connection:
         connection.execute(
@@ -163,9 +169,7 @@ def test_cancellation_checkpoint_atomically_finishes_both_states(
 def test_terminal_input_failure_is_persisted_without_retry(queued_job: UUID) -> None:
     assert database_url is not None
     store = PostgresJobLeaseStore(database_url)
-    lease = store.acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    ).lease
+    lease = store.acquire(task_message(queued_job)).lease
     assert lease is not None
 
     outcome = store.record_failure(
@@ -193,7 +197,7 @@ def test_transient_failures_retry_then_exhaust_the_attempt_limit(
 ) -> None:
     assert database_url is not None
     store = PostgresJobLeaseStore(database_url, retry_base_seconds=1)
-    message = ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    message = task_message(queued_job)
     failure = JobFailure(
         "provider_unavailable",
         "The provider is temporarily unavailable.",
@@ -243,9 +247,7 @@ def test_inspected_media_metadata_requires_the_current_lease_token(
     queued_job: UUID,
 ) -> None:
     assert database_url is not None
-    decision = PostgresJobLeaseStore(database_url).acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    )
+    decision = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job))
     assert decision.lease is not None
     metadata = InspectedMediaMetadata(
         size_bytes=4096,
@@ -321,9 +323,7 @@ def test_inspected_media_metadata_requires_the_current_lease_token(
 
 def test_stale_generation_is_rejected_before_leasing(queued_job: UUID) -> None:
     assert database_url is not None
-    decision = PostgresJobLeaseStore(database_url).acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=2)
-    )
+    decision = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job, 2))
 
     assert decision.outcome is LeaseOutcome.GENERATION_MISMATCH
     assert decision.lease is None
@@ -350,9 +350,7 @@ def test_expired_lease_is_replaced_with_a_unique_token(queued_job: UUID) -> None
             (queued_job,),
         )
 
-    decision = PostgresJobLeaseStore(database_url).acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    )
+    decision = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job))
 
     assert decision.outcome is LeaseOutcome.ACQUIRED
     assert decision.lease is not None
@@ -368,7 +366,7 @@ def test_worker_exit_on_final_attempt_is_terminal_after_lease_expiry(
             "update jobs set max_attempts = 1 where id = %s", (queued_job,)
         )
     store = PostgresJobLeaseStore(database_url)
-    message = ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
+    message = task_message(queued_job)
     first = store.acquire(message)
     assert first.outcome is LeaseOutcome.ACQUIRED
     with psycopg.connect(database_url) as connection:
@@ -409,9 +407,7 @@ def test_terminal_job_is_acknowledged_even_for_an_old_generation(
             (queued_job,),
         )
 
-    decision = PostgresJobLeaseStore(database_url).acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=2)
-    )
+    decision = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job, 2))
 
     assert decision.outcome is LeaseOutcome.TERMINAL
     assert decision.lease is None
@@ -437,11 +433,7 @@ def test_completion_atomically_commits_the_job_and_small_inspection_summary(
     queued_job: UUID,
 ) -> None:
     assert database_url is not None
-    lease = (
-        PostgresJobLeaseStore(database_url)
-        .acquire(ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1))
-        .lease
-    )
+    lease = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job)).lease
     assert lease is not None
     artifact_written = False
 
@@ -500,9 +492,7 @@ def test_completion_atomically_commits_the_job_and_small_inspection_summary(
         True,
     )
 
-    redelivery = PostgresJobLeaseStore(database_url).acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    )
+    redelivery = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job))
     assert redelivery.outcome is LeaseOutcome.TERMINAL
     assert redelivery.lease is None
 
@@ -512,9 +502,7 @@ def test_stale_lease_cannot_write_over_a_newer_attempt_or_committed_result(
 ) -> None:
     assert database_url is not None
     lease_store = PostgresJobLeaseStore(database_url)
-    first = lease_store.acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    ).lease
+    first = lease_store.acquire(task_message(queued_job)).lease
     assert first is not None
     with psycopg.connect(database_url) as connection:
         connection.execute(
@@ -522,9 +510,7 @@ def test_stale_lease_cannot_write_over_a_newer_attempt_or_committed_result(
             "where id = %s",
             (queued_job,),
         )
-    second = lease_store.acquire(
-        ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1)
-    ).lease
+    second = lease_store.acquire(task_message(queued_job)).lease
     assert second is not None
     store = PostgresInspectionCompletionStore(database_url)
     writes: list[str] = []
@@ -561,11 +547,7 @@ def test_database_failure_after_artifact_write_rolls_back_both_states(
     queued_job: UUID,
 ) -> None:
     assert database_url is not None
-    lease = (
-        PostgresJobLeaseStore(database_url)
-        .acquire(ProcessTaskMessage(jobId=queued_job, dispatchGeneration=1))
-        .lease
-    )
+    lease = PostgresJobLeaseStore(database_url).acquire(task_message(queued_job)).lease
     assert lease is not None
     completion = completion_for(lease.inspection_id)
     invalid_completion = InspectionCompletion(

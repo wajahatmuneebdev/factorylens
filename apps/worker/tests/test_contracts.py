@@ -30,6 +30,15 @@ def test_task_fixture_validates_and_rejects_extra_payload() -> None:
         ProcessTaskMessage.model_validate_json(
             json.dumps({**payload, "dispatchGeneration": 2**53})
         )
+    with pytest.raises(ValidationError, match="durable job identity"):
+        ProcessTaskMessage.model_validate_json(
+            json.dumps(
+                {
+                    **payload,
+                    "correlationId": "f29c7b8c-d2ce-4a37-93bd-2d34ea89bb25",
+                }
+            )
+        )
 
 
 def test_prediction_fixture_validates() -> None:

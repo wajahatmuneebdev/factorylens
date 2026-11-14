@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, count, eq, gte, inArray, isNull, lt } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import * as schema from "./schema.js";
@@ -22,6 +22,13 @@ export interface LeaseRecoveryCounts {
   retryWait: number;
 }
 
+export interface OperationalSnapshot {
+  failedJobCount: number;
+  oldestQueuedJobAgeSeconds: number;
+  queuedJobCount: number;
+  staleLeaseCount: number;
+}
+
 export interface MaintenanceRepository {
   deleteAbandonedInspection(id: string, cutoff: Date): Promise<boolean>;
   deleteExpiredTerminalInspection(id: string, cutoff: Date): Promise<boolean>;
@@ -37,6 +44,7 @@ export interface MaintenanceRepository {
     cutoff: Date,
     limit: number,
   ): Promise<PendingDispatchRecord[]>;
+  operationalSnapshot(now: Date): Promise<OperationalSnapshot>;
   markJobDispatched(
     jobId: string,
     dispatchGeneration: number,
@@ -68,6 +76,54 @@ export class PostgresMaintenanceRepository implements MaintenanceRepository {
       )
       .orderBy(asc(schema.jobs.availableAt), asc(schema.jobs.id))
       .limit(limit);
+  }
+
+  async operationalSnapshot(now: Date): Promise<OperationalSnapshot> {
+    const queuedStatuses: (typeof schema.jobs.$inferSelect)["status"][] = [
+      "pending_dispatch",
+      "queued",
+      "retry_wait",
+    ];
+    const [oldest] = await this.database
+      .select({ availableAt: schema.jobs.availableAt })
+      .from(schema.jobs)
+      .where(inArray(schema.jobs.status, queuedStatuses))
+      .orderBy(asc(schema.jobs.availableAt))
+      .limit(1);
+    const [queued] = await this.database
+      .select({ value: count() })
+      .from(schema.jobs)
+      .where(inArray(schema.jobs.status, queuedStatuses));
+    const [stale] = await this.database
+      .select({ value: count() })
+      .from(schema.jobs)
+      .where(
+        and(
+          eq(schema.jobs.status, "running"),
+          lt(schema.jobs.leaseExpiresAt, now),
+        ),
+      );
+    const failureWindow = new Date(now.getTime() - 60 * 60 * 1000);
+    const [failed] = await this.database
+      .select({ value: count() })
+      .from(schema.jobs)
+      .where(
+        and(
+          eq(schema.jobs.status, "failed"),
+          gte(schema.jobs.finishedAt, failureWindow),
+        ),
+      );
+    return {
+      failedJobCount: failed?.value ?? 0,
+      oldestQueuedJobAgeSeconds: oldest
+        ? Math.max(
+            0,
+            Math.floor((now.getTime() - oldest.availableAt.getTime()) / 1000),
+          )
+        : 0,
+      queuedJobCount: queued?.value ?? 0,
+      staleLeaseCount: stale?.value ?? 0,
+    };
   }
 
   async markJobDispatched(

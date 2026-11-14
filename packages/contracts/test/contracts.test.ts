@@ -219,7 +219,7 @@ describe("safe errors", () => {
 });
 
 describe("worker-facing fixtures", () => {
-  it("validates the task message and permits only its two fields", () => {
+  it("validates the correlated task identity and rejects extra fields", () => {
     const fixture = ProcessTaskMessageSchema.parse(
       readFixture("process-task-message.json"),
     );
@@ -229,6 +229,12 @@ describe("worker-facing fixtures", () => {
       ProcessTaskMessageSchema.safeParse({
         ...fixture,
         inspectionId: fixture.jobId,
+      }).success,
+    ).toBe(false);
+    expect(
+      ProcessTaskMessageSchema.safeParse({
+        ...fixture,
+        correlationId: "f29c7b8c-d2ce-4a37-93bd-2d34ea89bb25",
       }).success,
     ).toBe(false);
   });

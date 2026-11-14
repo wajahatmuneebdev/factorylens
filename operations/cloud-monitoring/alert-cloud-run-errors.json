@@ -1,0 +1,29 @@
+{
+  "displayName": "FactoryLens repeated Cloud Run 5xx responses",
+  "documentation": {
+    "content": "More than five API or worker 5xx responses occurred in five minutes. Filter structured logs by service and correlationId, then inspect Cloud Tasks attempts before retrying work.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "More than five 5xx responses in five minutes",
+      "conditionThreshold": {
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": ["resource.label.service_name"],
+            "perSeriesAligner": "ALIGN_DELTA"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "duration": "0s",
+        "filter": "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=monitoring.regex.full_match(\"factorylens-(web|worker)\") AND metric.label.response_code_class=\"5xx\"",
+        "thresholdValue": 5,
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "enabled": true
+}

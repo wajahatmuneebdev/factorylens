@@ -1,0 +1,18 @@
+{
+  "name": "factorylens_stale_lease_count",
+  "description": "Number of FactoryLens running jobs whose PostgreSQL lease has expired.",
+  "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.event=\"operational_snapshot\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "DISTRIBUTION",
+    "unit": "1"
+  },
+  "valueExtractor": "EXTRACT(jsonPayload.staleLeaseCount)",
+  "bucketOptions": {
+    "linearBuckets": {
+      "numFiniteBuckets": 20,
+      "offset": 0,
+      "width": 1
+    }
+  }
+}

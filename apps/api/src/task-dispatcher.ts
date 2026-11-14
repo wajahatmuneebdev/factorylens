@@ -3,6 +3,8 @@ import {
   type ProcessTaskMessage,
 } from "@factorylens/contracts";
 
+import { writeStructuredLog } from "./security.js";
+
 export type TaskDispatchOutcome = "dispatched" | "duplicate";
 
 export interface TaskDispatchResult {
@@ -23,7 +25,52 @@ export interface LocalTaskDispatcherOptions {
   simulateDispatchFailure?: (
     message: Readonly<ProcessTaskMessage>,
   ) => Error | undefined;
-  onWorkerError?: (error: unknown) => void;
+  onWorkerError?: (
+    error: unknown,
+    message: Readonly<ProcessTaskMessage>,
+  ) => void;
+}
+
+export interface LocalWorkerHttpOptions {
+  targetUrl: string;
+  token: string;
+}
+
+export function createLocalWorkerInvoker(
+  options: LocalWorkerHttpOptions,
+  fetchImplementation: typeof fetch = fetch,
+): LocalWorkerInvoker {
+  const target = new URL(options.targetUrl);
+  if (
+    target.protocol !== "http:" ||
+    !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) ||
+    target.username ||
+    target.password ||
+    target.search ||
+    target.hash
+  ) {
+    throw new Error("LOCAL_WORKER_URL must be a loopback HTTP URL");
+  }
+  if (options.token.length < 32) {
+    throw new Error(
+      "LOCAL_WORKER_TASK_TOKEN must contain at least 32 characters",
+    );
+  }
+  return async (message) => {
+    const response = await fetchImplementation(target, {
+      body: JSON.stringify(message),
+      headers: {
+        Authorization: `Bearer ${options.token}`,
+        "Content-Type": "application/json",
+        "X-CloudTasks-TaskName": deterministicTaskName(message),
+        "X-CloudTasks-TaskRetryCount": "0",
+      },
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error(`Local worker returned HTTP ${response.status}`);
+    }
+  };
 }
 
 export function deterministicTaskName(message: ProcessTaskMessage): string {
@@ -36,15 +83,24 @@ export class LocalTaskDispatcher implements TaskDispatcher {
   private readonly invokeWorker: LocalWorkerInvoker;
   private readonly simulateDispatchFailure:
     LocalTaskDispatcherOptions["simulateDispatchFailure"] | undefined;
-  private readonly onWorkerError: (error: unknown) => void;
+  private readonly onWorkerError: (
+    error: unknown,
+    message: Readonly<ProcessTaskMessage>,
+  ) => void;
 
   constructor(options: LocalTaskDispatcherOptions) {
     this.invokeWorker = options.invokeWorker;
     this.simulateDispatchFailure = options.simulateDispatchFailure;
     this.onWorkerError =
       options.onWorkerError ??
-      (() => {
-        console.error("Local worker invocation failed");
+      ((error, message) => {
+        writeStructuredLog("error", "local_worker_invocation_failed", {
+          correlationId: message.correlationId,
+          dispatchGeneration: message.dispatchGeneration,
+          errorType:
+            error instanceof Error ? error.constructor.name : "UnknownError",
+          jobId: message.jobId,
+        });
       });
   }
 
@@ -83,7 +139,7 @@ export class LocalTaskDispatcher implements TaskDispatcher {
     setImmediate(() => {
       void Promise.resolve()
         .then(() => this.invokeWorker(message))
-        .catch(this.onWorkerError);
+        .catch((error: unknown) => this.onWorkerError(error, message));
     });
 
     return { taskName, outcome: "dispatched" };

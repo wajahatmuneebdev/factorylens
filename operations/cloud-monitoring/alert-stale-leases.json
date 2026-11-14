@@ -1,0 +1,28 @@
+{
+  "displayName": "FactoryLens repeated stale leases",
+  "documentation": {
+    "content": "More than one expired running-job lease persisted for ten minutes. A single recovered lease does not page. Inspect worker termination, database latency, and heartbeat failure logs.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Multiple stale leases persist",
+      "conditionThreshold": {
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "crossSeriesReducer": "REDUCE_MAX",
+            "perSeriesAligner": "ALIGN_PERCENTILE_99"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "duration": "600s",
+        "filter": "metric.type=\"logging.googleapis.com/user/factorylens_stale_lease_count\" AND resource.type=\"cloud_run_revision\"",
+        "thresholdValue": 1,
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "enabled": true
+}

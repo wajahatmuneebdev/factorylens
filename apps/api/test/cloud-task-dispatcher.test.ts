@@ -116,6 +116,7 @@ describe("CloudTaskDispatcher", () => {
     const client = new FakeDispatchClient();
     const dispatcher = new CloudTaskDispatcher(options, client);
     const message: ProcessTaskMessage = {
+      correlationId: "c96f4f59-e47f-4d31-8d16-963ca3e4063e",
       dispatchGeneration: 4,
       jobId: "c96f4f59-e47f-4d31-8d16-963ca3e4063e",
     };
@@ -169,6 +170,7 @@ describe("CloudTaskDispatcher", () => {
 
     await expect(
       dispatcher.dispatch({
+        correlationId: "f29c7b8c-d2ce-4a37-93bd-2d34ea89bb25",
         dispatchGeneration: 1,
         jobId: "f29c7b8c-d2ce-4a37-93bd-2d34ea89bb25",
       }),

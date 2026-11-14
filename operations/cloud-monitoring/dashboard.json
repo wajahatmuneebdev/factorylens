@@ -1,0 +1,238 @@
+{
+  "displayName": "FactoryLens operations",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "height": 4,
+        "widget": {
+          "title": "API and worker 5xx responses",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["resource.label.service_name"],
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=monitoring.regex.full_match(\"factorylens-(web|worker)\") AND metric.label.response_code_class=\"5xx\""
+                  },
+                  "unitOverride": "1"
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 0,
+        "yPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "API and worker p95 request latency",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": ["resource.label.service_name"],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=monitoring.regex.full_match(\"factorylens-(web|worker)\")"
+                  },
+                  "unitOverride": "ms"
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run instance use",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "STACKED_AREA",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["resource.label.service_name"],
+                      "perSeriesAligner": "ALIGN_MAX"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/instance_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=monitoring.regex.full_match(\"factorylens-(web|worker)\")"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 4,
+        "xPos": 0,
+        "yPos": 4
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Tasks queue depth",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_MAX"
+                    },
+                    "filter": "metric.type=\"cloudtasks.googleapis.com/queue/depth\" AND resource.type=\"cloud_tasks_queue\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 4,
+        "xPos": 4,
+        "yPos": 4
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Tasks attempts by outcome",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "STACKED_BAR",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.label.response_code"],
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"cloudtasks.googleapis.com/queue/task_attempt_count\" AND resource.type=\"cloud_tasks_queue\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 4,
+        "xPos": 8,
+        "yPos": 4
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Oldest queued job age",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/factorylens_oldest_queued_job_age_seconds\" AND resource.type=\"cloud_run_revision\""
+                  },
+                  "unitOverride": "s"
+                }
+              }
+            ],
+            "thresholds": [{ "value": 600 }]
+          }
+        },
+        "width": 6,
+        "xPos": 0,
+        "yPos": 8
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Stale PostgreSQL leases",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/factorylens_stale_lease_count\" AND resource.type=\"cloud_run_revision\""
+                  }
+                }
+              }
+            ],
+            "thresholds": [{ "value": 1 }]
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 8
+      },
+      {
+        "height": 3,
+        "widget": {
+          "title": "Worker task retries",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "STACKED_BAR",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/factorylens_task_retry_count\" AND resource.type=\"cloud_run_revision\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 12,
+        "xPos": 0,
+        "yPos": 12
+      },
+      {
+        "height": 3,
+        "widget": {
+          "text": {
+            "content": "## R2 storage growth\nCloudflare owns this managed signal. Open **R2 > FactoryLens bucket > Metrics** and graph `payloadSize` and `objectCount` over 30 days. Investigate sustained growth after the 30-day terminal-retention window; do not copy R2 credentials into Google Cloud Monitoring.",
+            "format": "MARKDOWN"
+          },
+          "title": "Storage growth"
+        },
+        "width": 12,
+        "xPos": 0,
+        "yPos": 15
+      }
+    ]
+  }
+}

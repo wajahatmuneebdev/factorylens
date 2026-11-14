@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPConnection
 from threading import Thread
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -14,6 +14,7 @@ from factorylens_worker.server import WorkerHandler, WorkerServer, health_payloa
 from factorylens_worker.task_execution import TaskExecutionOutcome
 
 VALID_TASK = {
+    "correlationId": "018f4f72-3d3a-7c1c-b10b-f2a7c849e831",
     "jobId": "018f4f72-3d3a-7c1c-b10b-f2a7c849e831",
     "dispatchGeneration": 2,
 }
@@ -36,6 +37,7 @@ class FakeLeaseStore:
                 max_attempts=3,
                 token=uuid4(),
                 expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                correlation_id=message.correlationId,
             )
         return LeaseDecision(self.outcome, lease)
 
@@ -129,6 +131,7 @@ def test_task_endpoint_validates_and_acquires_only_the_task_contract() -> None:
     assert status == 204
     assert body == b""
     assert len(executor.leases) == 1
+    assert executor.leases[0].correlation_id == UUID(str(VALID_TASK["correlationId"]))
     assert [message.model_dump(mode="json") for message in store.messages] == [
         VALID_TASK
     ]

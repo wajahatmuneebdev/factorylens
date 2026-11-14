@@ -1,14 +1,18 @@
 import json
-import logging
 import os
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol
+from uuid import uuid4
 
 from pydantic import ValidationError
 
 from factorylens_worker.contracts import ProcessTaskMessage
-from factorylens_worker.internal_auth import GoogleServiceIdentityVerifier
+from factorylens_worker.internal_auth import (
+    GoogleServiceIdentityVerifier,
+    StaticTokenIdentityVerifier,
+)
 from factorylens_worker.job_lease import (
     JobLease,
     LeaseDecision,
@@ -17,6 +21,7 @@ from factorylens_worker.job_lease import (
 )
 from factorylens_worker.media_validation import MediaLimits, MediaValidationStage
 from factorylens_worker.media_validation_store import PostgresMediaMetadataStore
+from factorylens_worker.observability import write_structured_log
 from factorylens_worker.prediction_artifact import PredictionArtifactStage
 from factorylens_worker.prediction_artifact_store import (
     PostgresInspectionCompletionStore,
@@ -36,7 +41,6 @@ from factorylens_worker.workflow import (
 )
 
 MAX_TASK_BODY_BYTES = 16 * 1024
-logger = logging.getLogger(__name__)
 
 
 class JobLeaseStore(Protocol):
@@ -82,7 +86,11 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
     server_version = "FactoryLensWorker"
 
+    def log_message(self, format: str, *args: object) -> None:
+        del format, args
+
     def do_GET(self) -> None:
+        self._request_id = str(uuid4())
         if self.path != "/health":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -90,6 +98,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, health_payload())
 
     def do_POST(self) -> None:
+        self._request_id = str(uuid4())
+        started_at = time.monotonic()
         if self.path != "/internal/tasks/process":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -100,6 +110,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
             or token is None
             or not self._worker_server.identity_verifier.verify(token)
         ):
+            self._log_request_error(HTTPStatus.UNAUTHORIZED, "authentication_required")
             self._send_error_json(HTTPStatus.UNAUTHORIZED, "authentication_required")
             return
 
@@ -110,13 +121,30 @@ class WorkerHandler(BaseHTTPRequestHandler):
         try:
             message = ProcessTaskMessage.model_validate_json(body)
         except ValidationError:
+            self._log_request_error(HTTPStatus.BAD_REQUEST, "invalid_task_payload")
             self._send_error_json(HTTPStatus.BAD_REQUEST, "invalid_task_payload")
             return
 
+        task_id = self.headers.get("X-CloudTasks-TaskName")
+        context = {
+            "correlationId": str(message.correlationId),
+            "deliveryAttempt": self._delivery_attempt(),
+            "dispatchGeneration": message.dispatchGeneration,
+            "jobId": str(message.jobId),
+            "requestId": self._request_id,
+            "taskId": task_id,
+        }
+        write_structured_log("info", "task_received", **context)
+
         try:
             decision = self._worker_server.lease_store.acquire(message)
-        except Exception:
-            logger.exception("Task lease acquisition failed")
+        except Exception as error:
+            write_structured_log(
+                "error",
+                "task_lease_acquisition_failed",
+                **context,
+                errorType=type(error).__name__,
+            )
             self._send_error_json(
                 HTTPStatus.SERVICE_UNAVAILABLE, "database_unavailable"
             )
@@ -124,22 +152,38 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
         if decision.outcome is LeaseOutcome.ACQUIRED:
             if decision.lease is None:
-                logger.error("Acquired task decision did not include a lease")
+                write_structured_log("error", "task_lease_missing", **context)
                 self._send_error_json(
                     HTTPStatus.SERVICE_UNAVAILABLE, "lease_unavailable"
                 )
                 return
+            lease_context = {
+                **context,
+                "attempt": decision.lease.attempt_count,
+                "inspectionId": str(decision.lease.inspection_id),
+            }
+            write_structured_log("info", "task_started", **lease_context)
             try:
                 execution = self._worker_server.executor.execute(decision.lease)
-            except Exception:
-                logger.exception(
-                    "Task execution stopped before recording an outcome",
-                    extra={"job_id": str(decision.lease.job_id)},
+            except Exception as error:
+                write_structured_log(
+                    "error",
+                    "task_execution_interrupted",
+                    **lease_context,
+                    durationMs=round((time.monotonic() - started_at) * 1000),
+                    errorType=type(error).__name__,
                 )
                 self._send_error_json(
                     HTTPStatus.SERVICE_UNAVAILABLE, "processing_interrupted"
                 )
                 return
+            write_structured_log(
+                "info" if execution is TaskExecutionOutcome.ACKNOWLEDGED else "error",
+                "task_completed",
+                **lease_context,
+                durationMs=round((time.monotonic() - started_at) * 1000),
+                outcome=execution.value,
+            )
             if execution is TaskExecutionOutcome.RETRY:
                 self._send_error_json(
                     HTTPStatus.SERVICE_UNAVAILABLE,
@@ -150,6 +194,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
             self._send_empty(HTTPStatus.NO_CONTENT)
             return
         if decision.outcome is LeaseOutcome.TERMINAL:
+            write_structured_log("info", "task_duplicate_acknowledged", **context)
             self._send_empty(HTTPStatus.NO_CONTENT)
             return
         if decision.outcome is LeaseOutcome.BUSY:
@@ -167,6 +212,23 @@ class WorkerHandler(BaseHTTPRequestHandler):
             return
 
         self._send_error_json(HTTPStatus.CONFLICT, "job_not_eligible")
+
+    def _delivery_attempt(self) -> int | None:
+        raw = self.headers.get("X-CloudTasks-TaskRetryCount")
+        try:
+            return int(raw) + 1 if raw is not None else None
+        except ValueError:
+            return None
+
+    def _log_request_error(self, status: HTTPStatus, error_code: str) -> None:
+        write_structured_log(
+            "error" if status >= HTTPStatus.INTERNAL_SERVER_ERROR else "info",
+            "worker_request_rejected",
+            errorCode=error_code,
+            requestId=self._request_id,
+            status=int(status),
+            taskId=self.headers.get("X-CloudTasks-TaskName"),
+        )
 
     @property
     def _worker_server(self) -> WorkerServer:
@@ -236,6 +298,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Request-ID", self._request_id)
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -249,12 +312,26 @@ def main() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if database_url is None:
         raise RuntimeError("DATABASE_URL is required")
-    oidc_audience = os.environ.get("WORKER_OIDC_AUDIENCE")
-    service_account_email = os.environ.get("CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL")
-    if not oidc_audience or not service_account_email:
-        raise RuntimeError(
-            "WORKER_OIDC_AUDIENCE and CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL are required"
+    auth_mode = os.environ.get("WORKER_AUTH_MODE", "google")
+    if auth_mode == "local":
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            raise RuntimeError("Local worker authentication requires a loopback host")
+        identity_verifier: InternalIdentityVerifier = StaticTokenIdentityVerifier(
+            os.environ.get("LOCAL_WORKER_TASK_TOKEN", "")
         )
+    elif auth_mode == "google":
+        oidc_audience = os.environ.get("WORKER_OIDC_AUDIENCE")
+        service_account_email = os.environ.get("CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL")
+        if not oidc_audience or not service_account_email:
+            raise RuntimeError(
+                "WORKER_OIDC_AUDIENCE and "
+                "CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL are required"
+            )
+        identity_verifier = GoogleServiceIdentityVerifier(
+            oidc_audience, service_account_email
+        )
+    else:
+        raise RuntimeError("WORKER_AUTH_MODE must be google or local")
 
     required_r2_values = {
         name: os.environ.get(name)
@@ -308,10 +385,8 @@ def main() -> None:
     server = WorkerServer((host, port), WorkerHandler)
     server.lease_store = lease_store
     server.executor = TaskExecutor(lease_store, pipeline)
-    server.identity_verifier = GoogleServiceIdentityVerifier(
-        oidc_audience, service_account_email
-    )
-    print(f"FactoryLens worker listening on http://{host}:{port}")
+    server.identity_verifier = identity_verifier
+    write_structured_log("info", "worker_listening", host=host, port=port)
 
     try:
         server.serve_forever()

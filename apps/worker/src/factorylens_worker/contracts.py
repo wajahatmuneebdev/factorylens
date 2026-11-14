@@ -21,8 +21,15 @@ NonNegativeNumber = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 class ProcessTaskMessage(ContractModel):
+    correlationId: UUID
     jobId: UUID
     dispatchGeneration: SafePositiveInt
+
+    @model_validator(mode="after")
+    def validate_correlation(self) -> Self:
+        if self.correlationId != self.jobId:
+            raise ValueError("correlationId must match the durable job identity")
+        return self
 
 
 class PredictionBox(ContractModel):
