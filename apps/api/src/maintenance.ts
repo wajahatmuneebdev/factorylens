@@ -5,6 +5,7 @@ import type {
   MaintenanceRepository,
 } from "./db/maintenance-repository.js";
 import type { InternalIdentityVerifier } from "./internal-auth.js";
+import { rejectBrowserSession } from "./security.js";
 import { processingObjectKeys, type ObjectStorage } from "./storage.js";
 import type { TaskDispatcher } from "./task-dispatcher.js";
 
@@ -93,7 +94,11 @@ export function registerMaintenanceRoutes(
   const now = dependencies.now ?? (() => new Date());
   app.post("/internal/maintenance/reconcile", async (request, response) => {
     const token = bearerToken(request.header("authorization"));
-    if (!token || !(await dependencies.identityVerifier.verify(token))) {
+    if (
+      rejectBrowserSession(request) ||
+      !token ||
+      !(await dependencies.identityVerifier.verify(token))
+    ) {
       response.status(401).json({ error: { code: "authentication_required" } });
       return;
     }

@@ -1,4 +1,15 @@
-import { and, desc, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  lt,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import { ERROR_DEFINITIONS, ErrorCodeSchema } from "@factorylens/contracts";
@@ -51,6 +62,13 @@ export class InspectionCommandConflictError extends Error {
   }
 }
 
+export class ActiveInspectionQuotaError extends Error {
+  constructor(readonly limit: number) {
+    super(`Active inspection quota of ${limit} reached`);
+    this.name = "ActiveInspectionQuotaError";
+  }
+}
+
 export interface InspectionListCursor {
   createdAt: Date;
   id: string;
@@ -97,8 +115,12 @@ export interface InspectionApiRepository extends OwnerScopedInspectionRepository
     inspectionId: string,
     inspectedSizeBytes: number,
     now: Date,
+    maxAttempts?: number,
   ): Promise<UploadCompletionRecord | null>;
-  createOwned(input: CreateOwnedInspectionInput): Promise<InspectionRecord>;
+  createOwned(
+    input: CreateOwnedInspectionInput,
+    maxActiveInspections?: number,
+  ): Promise<InspectionRecord>;
   findOwnedUploadCompletionById(
     ownerUserId: string,
     inspectionId: string,
@@ -120,6 +142,7 @@ export interface InspectionApiRepository extends OwnerScopedInspectionRepository
     ownerUserId: string,
     inspectionId: string,
     now: Date,
+    maxActiveInspections?: number,
   ): Promise<UploadCompletionRecord | null>;
   markOwnedJobDispatched(
     ownerUserId: string,
@@ -139,6 +162,7 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
     inspectionId: string,
     inspectedSizeBytes: number,
     now: Date,
+    maxAttempts = 3,
   ): Promise<UploadCompletionRecord | null> {
     return this.database.transaction(async (transaction) => {
       const [inspection] = await transaction
@@ -199,7 +223,7 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
 
       const [job] = await transaction
         .insert(schema.jobs)
-        .values({ inspectionId: queuedInspection.id })
+        .values({ inspectionId: queuedInspection.id, maxAttempts })
         .returning();
       if (!job) {
         throw new Error("Job insert returned no row");
@@ -211,16 +235,38 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
 
   async createOwned(
     input: CreateOwnedInspectionInput,
+    maxActiveInspections = 3,
   ): Promise<InspectionRecord> {
-    const [inspection] = await this.database
-      .insert(schema.inspections)
-      .values(input)
-      .returning();
+    return this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${input.ownerUserId}, 0))`,
+      );
+      const [active] = await transaction
+        .select({ count: count() })
+        .from(schema.inspections)
+        .where(
+          and(
+            eq(schema.inspections.ownerUserId, input.ownerUserId),
+            inArray(schema.inspections.status, [
+              "awaiting_upload",
+              "queued",
+              "processing",
+            ]),
+          ),
+        );
+      if ((active?.count ?? 0) >= maxActiveInspections) {
+        throw new ActiveInspectionQuotaError(maxActiveInspections);
+      }
 
-    if (!inspection) {
-      throw new Error("Inspection insert returned no row");
-    }
-    return inspection;
+      const [inspection] = await transaction
+        .insert(schema.inspections)
+        .values(input)
+        .returning();
+      if (!inspection) {
+        throw new Error("Inspection insert returned no row");
+      }
+      return inspection;
+    });
   }
 
   async findOwnedById(
@@ -454,8 +500,12 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
     ownerUserId: string,
     inspectionId: string,
     now: Date,
+    maxActiveInspections = 3,
   ): Promise<UploadCompletionRecord | null> {
     return this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${ownerUserId}, 0))`,
+      );
       const [inspection] = await transaction
         .select()
         .from(schema.inspections)
@@ -499,6 +549,23 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
         ERROR_DEFINITIONS[errorCode.data] !== "retryable"
       ) {
         throw new InspectionCommandConflictError(inspection.status);
+      }
+
+      const [active] = await transaction
+        .select({ count: count() })
+        .from(schema.inspections)
+        .where(
+          and(
+            eq(schema.inspections.ownerUserId, ownerUserId),
+            inArray(schema.inspections.status, [
+              "awaiting_upload",
+              "queued",
+              "processing",
+            ]),
+          ),
+        );
+      if ((active?.count ?? 0) >= maxActiveInspections) {
+        throw new ActiveInspectionQuotaError(maxActiveInspections);
       }
 
       const [queuedInspection] = await transaction

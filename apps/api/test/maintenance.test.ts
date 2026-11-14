@@ -146,6 +146,14 @@ describe("POST /internal/maintenance/reconcile", () => {
           .set("Authorization", "Bearer invalid")
       ).status,
     ).toBe(401);
+    expect(
+      (
+        await request(app)
+          .post("/internal/maintenance/reconcile")
+          .set("Authorization", "Bearer valid")
+          .set("Cookie", "__Host-factorylens_session=browser-token")
+      ).status,
+    ).toBe(401);
   });
 
   it("batches each repair and reports partial storage failure", async () => {

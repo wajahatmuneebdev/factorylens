@@ -20,6 +20,7 @@ export const ERROR_DEFINITIONS = {
   processing_attempts_exhausted: "terminal",
   storage_unavailable: "retryable",
   provider_unavailable: "retryable",
+  rate_limit_exceeded: "retryable",
   lease_conflict: "retryable",
   inspection_cancelled: "cancelled",
   authentication_required: "authorization",
