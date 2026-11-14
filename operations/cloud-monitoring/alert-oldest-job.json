@@ -1,0 +1,28 @@
+{
+  "displayName": "FactoryLens oldest queued job is stuck",
+  "documentation": {
+    "content": "The oldest queued job has remained older than ten minutes for ten minutes. Check queue depth, worker instances, dispatch errors, and maintenance reconciliation logs.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Oldest queued job exceeds ten minutes",
+      "conditionThreshold": {
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "crossSeriesReducer": "REDUCE_MAX",
+            "perSeriesAligner": "ALIGN_PERCENTILE_99"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "duration": "600s",
+        "filter": "metric.type=\"logging.googleapis.com/user/factorylens_oldest_queued_job_age_seconds\" AND resource.type=\"cloud_run_revision\"",
+        "thresholdValue": 600,
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "enabled": true
+}

@@ -2,9 +2,14 @@ import { z } from "zod";
 
 export const ProcessTaskMessageSchema = z
   .object({
-    jobId: z.uuid(),
+    correlationId: z.uuid(),
     dispatchGeneration: z.number().int().positive(),
+    jobId: z.uuid(),
   })
-  .strict();
+  .strict()
+  .refine((message) => message.correlationId === message.jobId, {
+    message: "correlationId must match the durable job identity",
+    path: ["correlationId"],
+  });
 
 export type ProcessTaskMessage = z.infer<typeof ProcessTaskMessageSchema>;

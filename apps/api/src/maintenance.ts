@@ -5,7 +5,11 @@ import type {
   MaintenanceRepository,
 } from "./db/maintenance-repository.js";
 import type { InternalIdentityVerifier } from "./internal-auth.js";
-import { rejectBrowserSession } from "./security.js";
+import {
+  rejectBrowserSession,
+  requestId,
+  writeStructuredLog,
+} from "./security.js";
 import { processingObjectKeys, type ObjectStorage } from "./storage.js";
 import type { TaskDispatcher } from "./task-dispatcher.js";
 
@@ -110,6 +114,8 @@ export function registerMaintenanceRoutes(
       failed: 0,
       succeeded: 0,
     };
+    const operations =
+      await dependencies.repository.operationalSnapshot(startedAt);
     const pending = await dependencies.repository.listPendingDispatches(
       cutoff(startedAt, policy.dispatchGraceMs),
       policy.batchSize,
@@ -119,8 +125,17 @@ export function registerMaintenanceRoutes(
       dispatch.attempted += 1;
       try {
         const result = await dependencies.taskDispatcher.dispatch({
+          correlationId: job.jobId,
           dispatchGeneration: job.dispatchGeneration,
           jobId: job.jobId,
+        });
+        writeStructuredLog("info", "task_redispatched", {
+          correlationId: job.jobId,
+          dispatchGeneration: job.dispatchGeneration,
+          jobId: job.jobId,
+          requestId: requestId(request),
+          taskId: result.taskName,
+          taskOutcome: result.outcome,
         });
         if (
           await dependencies.repository.markJobDispatched(
@@ -131,8 +146,16 @@ export function registerMaintenanceRoutes(
           )
         )
           dispatch.succeeded += 1;
-      } catch {
+      } catch (error) {
         dispatch.failed += 1;
+        writeStructuredLog("error", "task_redispatch_failed", {
+          correlationId: job.jobId,
+          dispatchGeneration: job.dispatchGeneration,
+          errorType:
+            error instanceof Error ? error.constructor.name : "UnknownError",
+          jobId: job.jobId,
+          requestId: requestId(request),
+        });
       }
     }
     const leases = beforeDeadline()
@@ -175,11 +198,18 @@ export function registerMaintenanceRoutes(
         ),
       beforeDeadline,
     );
+    writeStructuredLog("info", "operational_snapshot", {
+      ...operations,
+      failedDispatchCount: dispatch.failed,
+      recoveredRetryCount: leases.retryWait,
+      requestId: requestId(request),
+    });
     response.json({
       abandoned,
       dispatch,
       durationMs: Math.max(0, now().getTime() - startedAt.getTime()),
       leases,
+      operations,
       retention,
       timedOut: !beforeDeadline(),
     });

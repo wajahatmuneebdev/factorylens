@@ -1,3 +1,4 @@
+import hmac
 from typing import Any
 
 from google.auth.transport.requests import Request
@@ -26,3 +27,15 @@ class GoogleServiceIdentityVerifier:
             claims.get("email") == self._service_account_email
             and claims.get("email_verified") is True
         )
+
+
+class StaticTokenIdentityVerifier:
+    """Loopback-only development identity; production uses Google OIDC."""
+
+    def __init__(self, expected_token: str) -> None:
+        if len(expected_token) < 32:
+            raise ValueError("local task token must contain at least 32 characters")
+        self._expected_token = expected_token
+
+    def verify(self, token: str) -> bool:
+        return hmac.compare_digest(token, self._expected_token)

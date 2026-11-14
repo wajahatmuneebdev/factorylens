@@ -59,7 +59,10 @@ uploads, and expired terminal inspection data.
 Cross-cutting application protections now enforce same-origin state changes,
 security headers, bounded request rates, per-user active-work quotas, configured
 media and attempt limits, Google service identity on internal routes, and
-structured-log redaction.
+structured-log redaction. Correlated JSON lifecycle logs now connect API
+requests, durable jobs, task deliveries, and worker outcomes. Managed Cloud Run,
+Cloud Tasks, maintenance-snapshot, and R2 views plus repeated-symptom alert
+definitions are documented in [OPERATIONS.md](./OPERATIONS.md).
 
 ## Development
 
@@ -100,6 +103,9 @@ variable described below is required only for its opt-in integration test. Set
 `npm run configure:tasks --workspace @factorylens/api` with deployment
 credentials to apply the configured rate, concurrency, and retry limits to an
 already-provisioned queue.
+For local task delivery, set the same `LOCAL_WORKER_TASK_TOKEN` in the API and
+worker environments; local authentication is restricted to the worker's
+loopback bind address.
 
 The default application safety policy permits at most three active inspections
 per user and enforces a 250 MiB, five-minute, 1920×1080 media envelope with at

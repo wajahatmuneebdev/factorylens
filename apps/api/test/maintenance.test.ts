@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 
 import express from "express";
+import type { ProcessTaskMessage } from "@factorylens/contracts";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +17,7 @@ import {
   type MaintenancePolicy,
 } from "../src/maintenance.js";
 import type { ObjectStorage } from "../src/storage.js";
+import { requestObservability } from "../src/security.js";
 import {
   deterministicTaskName,
   type TaskDispatcher,
@@ -47,6 +49,12 @@ class FakeRepository implements MaintenanceRepository {
   deletedTerminal: string[] = [];
   dispatched = new Set<string>();
   pending: PendingDispatchRecord[] = [];
+  snapshot = {
+    failedJobCount: 2,
+    oldestQueuedJobAgeSeconds: 420,
+    queuedJobCount: 3,
+    staleLeaseCount: 1,
+  };
   terminal: CleanupInspectionRecord[] = [];
 
   async listPendingDispatches(_cutoff: Date, limit: number) {
@@ -58,6 +66,9 @@ class FakeRepository implements MaintenanceRepository {
     if (this.dispatched.has(jobId)) return false;
     this.dispatched.add(jobId);
     return true;
+  }
+  async operationalSnapshot() {
+    return this.snapshot;
   }
   async recoverExpiredLeases() {
     return { failed: 1, retryWait: 1 };
@@ -103,7 +114,7 @@ class FakeStorage implements ObjectStorage {
 
 class FakeDispatcher implements TaskDispatcher {
   readonly messages: string[] = [];
-  async dispatch(message: { dispatchGeneration: number; jobId: string }) {
+  async dispatch(message: ProcessTaskMessage) {
     this.messages.push(deterministicTaskName(message));
     return {
       outcome: "dispatched" as const,
@@ -121,6 +132,7 @@ function maintenanceApp(
   },
 ) {
   const app = express();
+  app.use(requestObservability);
   registerMaintenanceRoutes(app, {
     identityVerifier: verifier,
     now: () => currentTime,
@@ -180,6 +192,7 @@ describe("POST /internal/maintenance/reconcile", () => {
       succeeded: 2,
     });
     expect(response.body.leases).toEqual({ failed: 1, retryWait: 1 });
+    expect(response.body.operations).toEqual(repository.snapshot);
     expect(response.body.abandoned).toEqual({
       attempted: 2,
       failed: 1,
@@ -243,7 +256,9 @@ describe("POST /internal/maintenance/reconcile", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(new Set(dispatcher.messages)).toEqual(
-      new Set([deterministicTaskName(pending)]),
+      new Set([
+        deterministicTaskName({ ...pending, correlationId: pending.jobId }),
+      ]),
     );
     expect(repository.dispatched).toEqual(new Set([pending.jobId]));
   });

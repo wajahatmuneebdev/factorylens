@@ -1,0 +1,10 @@
+{
+  "name": "factorylens_task_retry_count",
+  "description": "FactoryLens worker deliveries after the first Cloud Tasks attempt.",
+  "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.service=\"worker\" AND jsonPayload.event=\"task_received\" AND jsonPayload.deliveryAttempt>1",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1"
+  }
+}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { writeStructuredLog } from "./security.js";
 import { R2ObjectStorage } from "./storage.js";
 
 const environmentSchema = z.object({
@@ -31,10 +32,12 @@ async function configure(): Promise<void> {
     secretAccessKey: environment.R2_SECRET_ACCESS_KEY,
   });
   await storage.configureCors(appOrigin);
-  console.log("FactoryLens R2 CORS configuration applied");
+  writeStructuredLog("info", "r2_cors_configured");
 }
 
-void configure().catch(() => {
-  console.error("FactoryLens R2 configuration failed");
+void configure().catch((error: unknown) => {
+  writeStructuredLog("error", "r2_cors_configuration_failed", {
+    errorType: error instanceof Error ? error.constructor.name : "UnknownError",
+  });
   process.exitCode = 1;
 });

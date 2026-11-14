@@ -46,6 +46,7 @@ class JobLease:
     max_attempts: int
     token: UUID
     expires_at: datetime
+    correlation_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -330,6 +331,7 @@ class PostgresJobLeaseStore:
                         max_attempts=int(acquired[1]),
                         token=UUID(str(acquired[2])),
                         expires_at=acquired[3],
+                        correlation_id=message.correlationId,
                     ),
                 )
 

@@ -45,7 +45,9 @@ import { authenticatedUser } from "./session.js";
 import {
   DEFAULT_RATE_LIMITS,
   rateLimit,
+  requestId,
   RequestRateLimiter,
+  writeStructuredLog,
 } from "./security.js";
 import {
   type ObjectAccessAuthorizer,
@@ -202,6 +204,7 @@ async function dispatchPendingJob(
   inspectionId: string,
   completion: UploadCompletionRecord,
   now: Date,
+  currentRequestId: string,
 ): Promise<UploadCompletionRecord> {
   const job = completion.job;
   if (!job) {
@@ -211,9 +214,33 @@ async function dispatchPendingJob(
     return completion;
   }
 
-  const dispatched = await dependencies.taskDispatcher.dispatch({
+  const logContext = {
+    correlationId: job.id,
     dispatchGeneration: job.dispatchGeneration,
+    inspectionId,
     jobId: job.id,
+    requestId: currentRequestId,
+  };
+  writeStructuredLog("info", "job_ready_for_dispatch", logContext);
+  let dispatched;
+  try {
+    dispatched = await dependencies.taskDispatcher.dispatch({
+      correlationId: job.id,
+      dispatchGeneration: job.dispatchGeneration,
+      jobId: job.id,
+    });
+  } catch (error) {
+    writeStructuredLog("error", "task_dispatch_failed", {
+      ...logContext,
+      errorType:
+        error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    throw error;
+  }
+  writeStructuredLog("info", "task_dispatched", {
+    ...logContext,
+    taskId: dispatched.taskName,
+    taskOutcome: dispatched.outcome,
   });
   const marked = await dependencies.repository.markOwnedJobDispatched(
     ownerUserId,
@@ -337,6 +364,7 @@ export function registerInspectionRoutes(
             inspection.id,
             completion,
             now(),
+            requestId(request),
           );
           response.status(201).json({
             inspection: inspectionResponse(dispatched),
@@ -561,6 +589,7 @@ export function registerInspectionRoutes(
             path.data.id,
             completion,
             now(),
+            requestId(request),
           );
         } catch {
           sendSafeError(response, 503, {
@@ -901,6 +930,7 @@ export function registerInspectionRoutes(
           path.data.id,
           completion,
           now(),
+          requestId(request),
         );
       } catch {
         sendSafeError(response, 503, {

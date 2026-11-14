@@ -1,0 +1,28 @@
+{
+  "displayName": "FactoryLens repeated task failures",
+  "documentation": {
+    "content": "More than one retried task delivery occurred in ten minutes. One expected retry does not open an incident. Group task logs by correlationId and compare the worker errorCode.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "At least two retried deliveries in ten minutes",
+      "conditionThreshold": {
+        "aggregations": [
+          {
+            "alignmentPeriod": "600s",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "perSeriesAligner": "ALIGN_DELTA"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "duration": "0s",
+        "filter": "metric.type=\"logging.googleapis.com/user/factorylens_task_retry_count\" AND resource.type=\"cloud_run_revision\"",
+        "thresholdValue": 1,
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "enabled": true
+}

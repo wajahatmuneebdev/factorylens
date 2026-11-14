@@ -16,7 +16,10 @@ import { createGoogleOidcProvider } from "./google-oidc.js";
 import { GoogleServiceIdentityVerifier } from "./internal-auth.js";
 import { R2ObjectStorage } from "./storage.js";
 import { writeStructuredLog } from "./security.js";
-import { LocalTaskDispatcher } from "./task-dispatcher.js";
+import {
+  createLocalWorkerInvoker,
+  LocalTaskDispatcher,
+} from "./task-dispatcher.js";
 
 const environmentSchema = z.object({
   API_HOST: z.string().min(1).default("127.0.0.1"),
@@ -37,6 +40,10 @@ const environmentSchema = z.object({
     .max(300)
     .default(50),
   MAINTENANCE_RETENTION_DAYS: z.coerce.number().positive().default(30),
+  LOCAL_WORKER_TASK_TOKEN: z.string().min(32).optional(),
+  LOCAL_WORKER_URL: z
+    .url()
+    .default("http://127.0.0.1:8000/internal/tasks/process"),
   MAX_ACTIVE_INSPECTIONS_PER_USER: z.coerce.number().int().min(1).default(3),
   MAX_PROCESSING_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
   MAX_UPLOAD_BYTES: z.coerce
@@ -102,7 +109,10 @@ async function start(): Promise<void> {
     cloudTasksConfiguration !== undefined
       ? new CloudTaskDispatcher(cloudTasksConfiguration.dispatcher)
       : new LocalTaskDispatcher({
-          invokeWorker: () => undefined,
+          invokeWorker: createLocalWorkerInvoker({
+            targetUrl: environment.LOCAL_WORKER_URL,
+            token: environment.LOCAL_WORKER_TASK_TOKEN ?? "",
+          }),
         });
   const app = createApp({
     appOrigin,

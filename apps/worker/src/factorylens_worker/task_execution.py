@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import threading
 from collections.abc import Callable
 from enum import StrEnum
@@ -12,8 +11,8 @@ from factorylens_worker.job_lease import (
     JobFailure,
     JobLease,
 )
+from factorylens_worker.observability import write_structured_log
 
-logger = logging.getLogger(__name__)
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 
 
@@ -93,6 +92,16 @@ class TaskExecutor:
         except LeaseLostError:
             return TaskExecutionOutcome.RETRY
         except ProcessingFailureError as error:
+            write_structured_log(
+                "error",
+                "job_processing_failed",
+                attempt=lease.attempt_count,
+                correlationId=str(lease.correlation_id or lease.job_id),
+                errorCode=error.failure.code,
+                inspectionId=str(lease.inspection_id),
+                jobId=str(lease.job_id),
+                retryable=error.failure.retryable,
+            )
             return _failure_task_outcome(
                 self._store.record_failure(lease, error.failure)
             )
@@ -158,10 +167,17 @@ class _LeaseGuard:
                     self._outcome = self._store.checkpoint(
                         self._lease, self._stage, self._progress_percent
                     )
-                except Exception:
-                    logger.exception(
-                        "Job heartbeat failed",
-                        extra={"job_id": str(self._lease.job_id)},
+                except Exception as error:
+                    write_structured_log(
+                        "error",
+                        "job_heartbeat_failed",
+                        attempt=self._lease.attempt_count,
+                        correlationId=str(
+                            self._lease.correlation_id or self._lease.job_id
+                        ),
+                        errorType=type(error).__name__,
+                        inspectionId=str(self._lease.inspection_id),
+                        jobId=str(self._lease.job_id),
                     )
                     self._outcome = CheckpointOutcome.LOST
                     return

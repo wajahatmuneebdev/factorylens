@@ -13,6 +13,7 @@ const appOrigin = new URL("https://factorylens.example");
 
 describe("application security controls", () => {
   it("sets browser security headers without enabling application CORS", async () => {
+    const output = vi.spyOn(console, "log").mockImplementation(() => {});
     const response = await request(createApp()).get("/health");
 
     expect(response.headers["content-security-policy"]).toContain(
@@ -22,6 +23,20 @@ describe("application security controls", () => {
     expect(response.headers["x-frame-options"]).toBe("DENY");
     expect(response.headers["access-control-allow-origin"]).toBeUndefined();
     expect(response.headers["x-powered-by"]).toBeUndefined();
+    expect(response.headers["x-request-id"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f-]{27}$/,
+    );
+    const entry = JSON.parse(String(output.mock.calls[0]![0]));
+    expect(entry).toMatchObject({
+      event: "request_completed",
+      level: "info",
+      method: "GET",
+      path: "/health",
+      requestId: response.headers["x-request-id"],
+      service: "api",
+      status: 200,
+    });
+    output.mockRestore();
   });
 
   it("requires same-origin browser metadata on state-changing API requests", async () => {

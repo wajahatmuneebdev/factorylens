@@ -10,6 +10,7 @@ import {
   type ErrorCode,
   type InspectionState,
   type JobState,
+  type ProcessTaskMessage,
 } from "@factorylens/contracts";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -51,11 +52,11 @@ const oidcProvider: OidcProvider = {
 };
 
 class RecordingTaskDispatcher implements TaskDispatcher {
-  readonly messages: { dispatchGeneration: number; jobId: string }[] = [];
+  readonly messages: ProcessTaskMessage[] = [];
   fail = false;
   onDispatch?: (jobId: string) => Promise<void>;
 
-  async dispatch(message: { dispatchGeneration: number; jobId: string }) {
+  async dispatch(message: ProcessTaskMessage) {
     this.messages.push({ ...message });
     if (this.fail) {
       throw new Error("simulated dispatch failure");
@@ -238,6 +239,7 @@ describe("PostgreSQL migrations", () => {
 
     const jobId = randomUUID();
     const oldTaskName = deterministicTaskName({
+      correlationId: jobId,
       dispatchGeneration: 4,
       jobId,
     });
@@ -777,7 +779,11 @@ describe("PostgreSQL migrations", () => {
     expect(duplicate.status).toBe(200);
     expect(duplicate.body.job).toEqual(first.body.job);
     expect(dispatcher.messages).toEqual([
-      { jobId: first.body.job.id, dispatchGeneration: 1 },
+      {
+        correlationId: first.body.job.id,
+        jobId: first.body.job.id,
+        dispatchGeneration: 1,
+      },
     ]);
 
     const [stored] = await sql<
@@ -800,6 +806,7 @@ describe("PostgreSQL migrations", () => {
       count: 1,
       status: "queued",
       task_name: deterministicTaskName({
+        correlationId: first.body.job.id,
         jobId: first.body.job.id,
         dispatchGeneration: 1,
       }),
@@ -897,8 +904,16 @@ describe("PostgreSQL migrations", () => {
       status: "queued",
     });
     expect(dispatcher.messages).toEqual([
-      { jobId: pending!.id, dispatchGeneration: 1 },
-      { jobId: pending!.id, dispatchGeneration: 1 },
+      {
+        correlationId: pending!.id,
+        jobId: pending!.id,
+        dispatchGeneration: 1,
+      },
+      {
+        correlationId: pending!.id,
+        jobId: pending!.id,
+        dispatchGeneration: 1,
+      },
     ]);
     const [queued] = await sql<
       { status: string; task_enqueued_at: string | null; task_name: string }[]
@@ -910,6 +925,7 @@ describe("PostgreSQL migrations", () => {
     expect(queued).toMatchObject({
       status: "queued",
       task_name: deterministicTaskName({
+        correlationId: pending!.id,
         jobId: pending!.id,
         dispatchGeneration: 1,
       }),
@@ -1071,6 +1087,7 @@ describe("PostgreSQL migrations", () => {
         progress_percent: 0,
         status: "queued",
         task_name: deterministicTaskName({
+          correlationId: fixture.jobId!,
           dispatchGeneration: 5,
           jobId: fixture.jobId!,
         }),
@@ -1185,7 +1202,11 @@ describe("PostgreSQL migrations", () => {
       task_name: null,
     });
     expect(dispatcher.messages).toEqual([
-      { dispatchGeneration: 5, jobId: fixture.jobId },
+      {
+        correlationId: fixture.jobId,
+        dispatchGeneration: 5,
+        jobId: fixture.jobId,
+      },
     ]);
   });
 

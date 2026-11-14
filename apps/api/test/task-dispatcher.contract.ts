@@ -17,6 +17,7 @@ export type TaskDispatcherContractHarnessFactory = () =>
   TaskDispatcherContractHarness | Promise<TaskDispatcherContractHarness>;
 
 const message: ProcessTaskMessage = {
+  correlationId: "c96f4f59-e47f-4d31-8d16-963ca3e4063e",
   jobId: "c96f4f59-e47f-4d31-8d16-963ca3e4063e",
   dispatchGeneration: 2,
 };

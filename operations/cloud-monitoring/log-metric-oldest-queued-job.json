@@ -1,0 +1,18 @@
+{
+  "name": "factorylens_oldest_queued_job_age_seconds",
+  "description": "Age in seconds of the oldest pending, queued, or retry-wait FactoryLens job.",
+  "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.event=\"operational_snapshot\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "DISTRIBUTION",
+    "unit": "s"
+  },
+  "valueExtractor": "EXTRACT(jsonPayload.oldestQueuedJobAgeSeconds)",
+  "bucketOptions": {
+    "exponentialBuckets": {
+      "growthFactor": 2,
+      "numFiniteBuckets": 20,
+      "scale": 1
+    }
+  }
+}

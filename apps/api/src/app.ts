@@ -15,6 +15,7 @@ import {
 } from "./maintenance.js";
 import {
   browserCsrfProtection,
+  requestObservability,
   RequestRateLimiter,
   securityHeaders,
 } from "./security.js";
@@ -37,6 +38,7 @@ export function createApp(dependencies?: AppDependencies): express.Express {
 
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
+  app.use(requestObservability);
   app.use(securityHeaders);
 
   app.get("/health", (_request, response) => {

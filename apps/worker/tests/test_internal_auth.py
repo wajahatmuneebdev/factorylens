@@ -65,3 +65,13 @@ def test_google_service_identity_rejects_invalid_token(
     )
 
     assert verifier.verify("invalid-token") is False
+
+
+def test_local_identity_requires_a_high_entropy_exact_token() -> None:
+    token = "local-development-token-at-least-32-characters"
+    verifier = internal_auth.StaticTokenIdentityVerifier(token)
+
+    assert verifier.verify(token) is True
+    assert verifier.verify(f"{token}-wrong") is False
+    with pytest.raises(ValueError, match="at least 32"):
+        internal_auth.StaticTokenIdentityVerifier("too-short")

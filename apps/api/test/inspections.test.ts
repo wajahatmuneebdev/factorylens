@@ -1089,6 +1089,7 @@ describe("inspection API", () => {
     expect(repository.uploads[0]?.job).toMatchObject({
       status: "queued",
       taskName: deterministicTaskName({
+        correlationId: first.body.job.id,
         jobId: first.body.job.id,
         dispatchGeneration: 1,
       }),
@@ -1261,6 +1262,7 @@ describe("inspection API", () => {
       progress: { stage: null, percent: 0 },
     });
     expect(dispatcher.dispatch).toHaveBeenCalledWith({
+      correlationId: "523e4567-e89b-42d3-a456-426614174000",
       dispatchGeneration: 5,
       jobId: "523e4567-e89b-42d3-a456-426614174000",
     });

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 import { authenticatedUser, SESSION_COOKIE_NAME } from "./session.js";
@@ -194,10 +196,54 @@ export function writeStructuredLog(
   event: string,
   context: Record<string, unknown> = {},
 ): void {
-  const entry = JSON.stringify(redactLogValue({ event, level, ...context }));
+  const entry = JSON.stringify(
+    redactLogValue({
+      ...context,
+      event,
+      level,
+      service: "api",
+      timestamp: new Date().toISOString(),
+    }),
+  );
   if (level === "error") {
     console.error(entry);
   } else {
     console.log(entry);
   }
+}
+
+const requestIdKey = Symbol("requestId");
+type ObservedRequest = Request & { [requestIdKey]?: string };
+
+export function requestId(request: Request): string {
+  const value = (request as ObservedRequest)[requestIdKey];
+  if (!value)
+    throw new Error("Request observability middleware was not applied");
+  return value;
+}
+
+export function requestObservability(
+  request: Request,
+  response: Response,
+  next: NextFunction,
+): void {
+  const id = randomUUID();
+  const startedAt = performance.now();
+  (request as ObservedRequest)[requestIdKey] = id;
+  response.set("X-Request-ID", id);
+  response.once("finish", () => {
+    const context = {
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      method: request.method,
+      path: request.path,
+      requestId: id,
+      status: response.statusCode,
+    };
+    writeStructuredLog(
+      response.statusCode >= 500 ? "error" : "info",
+      "request_completed",
+      context,
+    );
+  });
+  next();
 }
