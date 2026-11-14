@@ -50,6 +50,8 @@ bounded polling, safe failures, cancellation, and eligible retry controls.
 Completed inspections load their authorized prediction artifact once and show
 responsive, synchronized Canvas annotations over HTML video playback, with
 local class and confidence filters plus an artifact-derived event timeline.
+They also present the committed aggregate and media summary with explicit,
+feedback-backed JSON and CSV downloads.
 Owner-scoped cancellation and retry commands are also connected. A bounded,
 service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
