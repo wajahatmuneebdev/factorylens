@@ -1,0 +1,22 @@
+project_id         = "factorylens-production"
+region             = "us-central1"
+billing_account_id = "000000-000000-000000"
+
+# Use an immutable tag or digest produced by the image build.
+web_image    = "us-central1-docker.pkg.dev/factorylens-production/factorylens/web@sha256:REPLACE"
+worker_image = "us-central1-docker.pkg.dev/factorylens-production/factorylens/worker@sha256:REPLACE"
+
+application_origin    = "https://factorylens.example"
+google_oidc_client_id = "REPLACE.apps.googleusercontent.com"
+
+r2_account_id = "00000000000000000000000000000000"
+r2_bucket     = "factorylens-private"
+
+workflow_endpoint    = "https://serverless.roboflow.com"
+workflow_workspace   = "REPLACE"
+workflow_fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+# Set a reviewed initial monthly budget. Default billing recipients and project
+# owners receive alerts; add Monitoring channel resource names when available.
+monthly_budget_usd          = 100
+budget_notification_channels = []

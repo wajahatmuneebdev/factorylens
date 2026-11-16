@@ -71,6 +71,11 @@ and the media worker at their separate scaling boundaries. The reproducible
 Neon and private R2 production procedure, pool budget, retention settings,
 migration command, and credential-safe storage smoke check are documented in
 [DATA_SERVICES.md](./DATA_SERVICES.md).
+The Google execution path is also reproducible through
+[Terraform](./infrastructure/google-cloud/README.md): separate web and worker
+Cloud Run services, dedicated runtime and caller identities, Secret Manager
+entries, the bounded Cloud Tasks queue, authenticated maintenance scheduling,
+and project budget alerts are configured with conservative scaling caps.
 
 ## Development
 
