@@ -1023,12 +1023,12 @@ describe("PostgreSQL migrations", () => {
 
   it("retries every documented retryable failure with a new dispatch generation", async () => {
     const dispatcher = new RecordingTaskDispatcher();
-    const { app, token, user } = await createUploadHarness(dispatcher);
     const retryableCodes = Object.entries(ERROR_DEFINITIONS)
       .filter(([, category]) => category === "retryable")
       .map(([code]) => code as ErrorCode);
 
     for (const errorCode of retryableCodes) {
+      const { app, token, user } = await createUploadHarness(dispatcher);
       const fixture = await createCommandInspection(
         user.id,
         "failed",
@@ -1048,7 +1048,12 @@ describe("PostgreSQL migrations", () => {
         status: "queued",
         error: null,
         progress: { stage: null, percent: 0 },
-        job: null,
+        job: {
+          attempt: 0,
+          cancellationRequested: false,
+          maxAttempts: 3,
+          status: "queued",
+        },
       });
       const [stored] = await sql<
         {
@@ -1104,7 +1109,29 @@ describe("PostgreSQL migrations", () => {
 
   it("rejects retry from every non-failed state and every non-retryable failure", async () => {
     const dispatcher = new RecordingTaskDispatcher();
-    const { app, token, user } = await createUploadHarness(dispatcher);
+    async function expectRetryConflict(
+      inspectionStatus: InspectionState,
+      jobStatus: JobState | null,
+      errorCode: ErrorCode | null,
+      label: string,
+    ) {
+      const { app, token, user } = await createUploadHarness(dispatcher);
+      const fixture = await createCommandInspection(
+        user.id,
+        inspectionStatus,
+        jobStatus,
+        errorCode,
+      );
+      const response = await runInspectionCommand(
+        app,
+        token,
+        fixture.inspectionId,
+        "retry",
+      );
+      expect(response.status, label).toBe(409);
+      expect(response.body.error.code).toBe("inspection_state_conflict");
+    }
+
     const stateCases: [InspectionState, JobState | null][] = [
       ["awaiting_upload", null],
       ["queued", "queued"],
@@ -1114,40 +1141,19 @@ describe("PostgreSQL migrations", () => {
     ];
 
     for (const [inspectionStatus, jobStatus] of stateCases) {
-      const fixture = await createCommandInspection(
-        user.id,
+      await expectRetryConflict(
         inspectionStatus,
         jobStatus,
         null,
+        inspectionStatus,
       );
-      const response = await runInspectionCommand(
-        app,
-        token,
-        fixture.inspectionId,
-        "retry",
-      );
-      expect(response.status, inspectionStatus).toBe(409);
-      expect(response.body.error.code).toBe("inspection_state_conflict");
     }
 
     const nonRetryableCodes = Object.entries(ERROR_DEFINITIONS)
       .filter(([, category]) => category !== "retryable")
       .map(([code]) => code as ErrorCode);
     for (const errorCode of nonRetryableCodes) {
-      const fixture = await createCommandInspection(
-        user.id,
-        "failed",
-        "failed",
-        errorCode,
-      );
-      const response = await runInspectionCommand(
-        app,
-        token,
-        fixture.inspectionId,
-        "retry",
-      );
-      expect(response.status, errorCode).toBe(409);
-      expect(response.body.error.code).toBe("inspection_state_conflict");
+      await expectRetryConflict("failed", "failed", errorCode, errorCode);
     }
 
     expect(dispatcher.messages).toEqual([]);

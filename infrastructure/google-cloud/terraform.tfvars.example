@@ -2,6 +2,9 @@ project_id         = "factorylens-production"
 region             = "us-central1"
 billing_account_id = "000000-000000-000000"
 
+github_repository        = "wajahatmuneebdev/factorylens"
+github_deployment_branch = "main"
+
 # Use an immutable tag or digest produced by the image build.
 web_image    = "us-central1-docker.pkg.dev/factorylens-production/factorylens/web@sha256:REPLACE"
 worker_image = "us-central1-docker.pkg.dev/factorylens-production/factorylens/worker@sha256:REPLACE"

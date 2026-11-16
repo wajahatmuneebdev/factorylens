@@ -4,9 +4,6 @@ AGENTS.override.md
 .agents/
 .codex/
 
-# Local documentation tooling
-.markdownlint-cli2.jsonc
-
 # Local operating-system files
 .DS_Store
 

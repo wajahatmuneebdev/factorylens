@@ -1,0 +1,101 @@
+name: Validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Application, contracts, browser, and infrastructure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:18.1-bookworm@sha256:cc9f4143a8d2fa8cf3749d0cb4d26ecf2d53a77a2ac807e9ebd67ae22426221a
+        env:
+          POSTGRES_DB: factorylens_test
+          POSTGRES_PASSWORD: factorylens
+          POSTGRES_USER: factorylens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username factorylens --dbname factorylens_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out the reviewed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          uv sync --project apps/worker --locked
+
+      - name: Run formatting, lint, type, unit, and contract checks
+        id: application
+        run: npm run check
+
+      - name: Run PostgreSQL migration integration test
+        id: integration
+        env:
+          TEST_DATABASE_URL: postgresql://factorylens:factorylens@127.0.0.1:5432/factorylens_test
+        run: npm run test:integration --workspace @factorylens/api
+
+      - name: Install the deterministic browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run deterministic Playwright tests
+        id: browser
+        run: npm run test:e2e
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+
+      - name: Validate production infrastructure
+        id: infrastructure
+        working-directory: infrastructure/google-cloud
+        run: |
+          terraform fmt -check -diff
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Summarize validation
+        if: always()
+        run: |
+          {
+            echo "## Validation"
+            echo
+            echo "Validated revision: \`${GITHUB_SHA}\`"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Formatting, lint, types, unit, and contracts | **${{ steps.application.outcome }}** |"
+            echo "| PostgreSQL migration integration | **${{ steps.integration.outcome }}** |"
+            echo "| Deterministic Playwright | **${{ steps.browser.outcome }}** |"
+            echo "| Terraform formatting and validation | **${{ steps.infrastructure.outcome }}** |"
+            echo "| Overall | **${{ job.status }}** |"
+          } >> "$GITHUB_STEP_SUMMARY"
