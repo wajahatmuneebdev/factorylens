@@ -277,6 +277,104 @@ variable "max_processing_attempts" {
   }
 }
 
+variable "max_upload_bytes" {
+  description = "Deployment upload byte limit shared by the web and worker services."
+  type        = number
+  default     = 262144000
+
+  validation {
+    condition = (
+      floor(var.max_upload_bytes) == var.max_upload_bytes &&
+      var.max_upload_bytes >= 1 && var.max_upload_bytes <= 262144000
+    )
+    error_message = "max_upload_bytes must be between 1 byte and the public 250 MiB contract."
+  }
+}
+
+variable "max_media_duration_ms" {
+  description = "Deployment inspected media duration limit in milliseconds."
+  type        = number
+  default     = 300000
+
+  validation {
+    condition = (
+      floor(var.max_media_duration_ms) == var.max_media_duration_ms &&
+      var.max_media_duration_ms >= 1000 && var.max_media_duration_ms <= 300000
+    )
+    error_message = "max_media_duration_ms must be between one second and five minutes."
+  }
+}
+
+variable "max_media_width" {
+  description = "Deployment maximum landscape display width; portrait media may swap width and height."
+  type        = number
+  default     = 1920
+
+  validation {
+    condition = (
+      floor(var.max_media_width) == var.max_media_width &&
+      var.max_media_width >= 1 && var.max_media_width <= 1920
+    )
+    error_message = "max_media_width must be between 1 and 1920 pixels."
+  }
+}
+
+variable "max_media_height" {
+  description = "Deployment maximum landscape display height; portrait media may swap width and height."
+  type        = number
+  default     = 1080
+
+  validation {
+    condition = (
+      floor(var.max_media_height) == var.max_media_height &&
+      var.max_media_height >= 1 && var.max_media_height <= 1080
+    )
+    error_message = "max_media_height must be between 1 and 1080 pixels."
+  }
+}
+
+variable "max_active_inspections_per_user" {
+  description = "Deployment per-user active inspection limit."
+  type        = number
+  default     = 3
+
+  validation {
+    condition = (
+      floor(var.max_active_inspections_per_user) == var.max_active_inspections_per_user &&
+      var.max_active_inspections_per_user >= 1 && var.max_active_inspections_per_user <= 3
+    )
+    error_message = "max_active_inspections_per_user must be between 1 and 3."
+  }
+}
+
+variable "terminal_retention_days" {
+  description = "Deployment retention window after an inspection reaches a terminal state."
+  type        = number
+  default     = 30
+
+  validation {
+    condition = (
+      floor(var.terminal_retention_days) == var.terminal_retention_days &&
+      var.terminal_retention_days >= 1 && var.terminal_retention_days <= 30
+    )
+    error_message = "terminal_retention_days must be between 1 and 30."
+  }
+}
+
+variable "abandoned_upload_hours" {
+  description = "Deployment retention window for incomplete uploads."
+  type        = number
+  default     = 24
+
+  validation {
+    condition = (
+      floor(var.abandoned_upload_hours) == var.abandoned_upload_hours &&
+      var.abandoned_upload_hours >= 1 && var.abandoned_upload_hours <= 24
+    )
+    error_message = "abandoned_upload_hours must be between 1 and 24."
+  }
+}
+
 variable "maintenance_schedule" {
   description = "UTC cron schedule for bounded reconciliation."
   type        = string

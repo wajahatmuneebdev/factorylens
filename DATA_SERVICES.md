@@ -19,6 +19,10 @@ recalculated before either Cloud Run maximum or `DATABASE_POOL_MAX` is raised.
 The Cloud Tasks queue remains limited to one concurrent dispatch, matching the
 single worker maximum.
 
+The controlled Neon and Roboflow capacity run in
+[`PROCESSING_ENVELOPE.md`](./PROCESSING_ENVELOPE.md) is the go-live gate for
+this budget. A local media benchmark does not prove managed-service capacity.
+
 Application maintenance deletes abandoned uploads after 24 hours and terminal
 inspection rows and objects after 30 days. Configure
 `MAINTENANCE_ABANDONED_UPLOAD_HOURS=24` and `MAINTENANCE_RETENTION_DAYS=30`.

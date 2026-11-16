@@ -19,6 +19,18 @@ workflow_endpoint    = "https://serverless.roboflow.com"
 workflow_workspace   = "REPLACE"
 workflow_fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
+# Locally benchmarked candidate envelope. These may be made stricter, but
+# increasing them beyond these values requires a new benchmark and architecture
+# review. Complete PROCESSING_ENVELOPE.md's deployed gate before real-user use.
+max_upload_bytes                = 262144000
+max_media_duration_ms           = 300000
+max_media_width                 = 1920
+max_media_height                = 1080
+max_active_inspections_per_user = 3
+max_processing_attempts         = 3
+terminal_retention_days         = 30
+abandoned_upload_hours          = 24
+
 # Set a reviewed initial monthly budget. Default billing recipients and project
 # owners receive alerts; add Monitoring channel resource names when available.
 monthly_budget_usd          = 100
