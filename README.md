@@ -66,6 +66,8 @@ structured-log redaction. Correlated JSON lifecycle logs now connect API
 requests, durable jobs, task deliveries, and worker outcomes. Managed Cloud Run,
 Cloud Tasks, maintenance-snapshot, and R2 views plus repeated-symptom alert
 definitions are documented in [OPERATIONS.md](./OPERATIONS.md).
+The two production container images now package the combined web/API service
+and the media worker at their separate scaling boundaries.
 
 ## Development
 
@@ -145,16 +147,34 @@ acknowledged after their safe failure is persisted.
 
 The root commands apply consistently across the npm and uv workspaces:
 
-| Command                | Purpose                                            |
-| ---------------------- | -------------------------------------------------- |
-| `npm run build`        | Build the TypeScript packages and applications     |
-| `npm run typecheck`    | Type-check TypeScript and Python                   |
-| `npm run lint`         | Lint TypeScript, Markdown, and Python              |
-| `npm run format`       | Format TypeScript, JSON, and Python                |
-| `npm run format:check` | Check formatting without changing files            |
-| `npm test`             | Run the standard TypeScript and Python tests       |
-| `npm run test:e2e`     | Run the isolated Playwright critical-path tests    |
-| `npm run check`        | Run the standard clean-checkout verification suite |
+| Command                   | Purpose                                            |
+| ------------------------- | -------------------------------------------------- |
+| `npm run build`           | Build the TypeScript packages and applications     |
+| `npm run build:images`    | Build immutable web and worker production images   |
+| `npm run typecheck`       | Type-check TypeScript and Python                   |
+| `npm run lint`            | Lint TypeScript, Markdown, and Python              |
+| `npm run format`          | Format TypeScript, JSON, and Python                |
+| `npm run format:check`    | Check formatting without changing files            |
+| `npm test`                | Run the standard TypeScript and Python tests       |
+| `npm run test:e2e`        | Run the isolated Playwright critical-path tests    |
+| `npm run test:containers` | Build and smoke-test both production images        |
+| `npm run check`           | Run the standard clean-checkout verification suite |
+
+Production images are built from the repository root so the shared lockfiles
+and contracts remain in scope while `.dockerignore` excludes local media,
+credentials, caches, and build output. On a clean checkout,
+`npm run build:images` tags both images with the full Git revision. For a
+modified checkout or a release pipeline, set a unique immutable version such
+as `IMAGE_VERSION=2026.11.16.1`; the images record both that version and the
+source revision as OCI metadata. Both images run as non-root users, listen on
+port 8080, expose `/health`, and use `SIGTERM` for graceful shutdown.
+
+`npm run test:containers` requires Docker. It builds both images, starts a
+disposable PostgreSQL dependency, exercises both health endpoints and the
+single-origin web application, submits a real authenticated worker request
+against filesystem storage and fixture inference, checks the committed
+prediction artifact, and verifies clean termination. It makes no Roboflow or
+cloud-storage call.
 
 The PostgreSQL migration integration test is separate because it requires an
 empty disposable database. Set `TEST_DATABASE_URL` and run

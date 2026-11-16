@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPConnection
+from pathlib import Path
 from threading import Thread
 from uuid import UUID, uuid4
 
@@ -10,7 +11,13 @@ import pytest
 
 from factorylens_worker.contracts import ProcessTaskMessage
 from factorylens_worker.job_lease import JobLease, LeaseDecision, LeaseOutcome
-from factorylens_worker.server import WorkerHandler, WorkerServer, health_payload
+from factorylens_worker.server import (
+    WorkerHandler,
+    WorkerServer,
+    health_payload,
+    object_storage_from_environment,
+)
+from factorylens_worker.storage import LocalFilesystemStorage
 from factorylens_worker.task_execution import TaskExecutionOutcome
 
 VALID_TASK = {
@@ -120,6 +127,36 @@ def post_task(
 
 def test_health_payload() -> None:
     assert json.loads(health_payload()) == {"service": "worker", "status": "ok"}
+
+
+def test_local_filesystem_storage_requires_local_authentication(tmp_path: Path) -> None:
+    environment = {
+        "WORKER_STORAGE_BACKEND": "filesystem",
+        "LOCAL_STORAGE_ROOT": str(tmp_path),
+    }
+
+    storage = object_storage_from_environment(environment, local_authentication=True)
+    assert isinstance(storage, LocalFilesystemStorage)
+
+    with pytest.raises(
+        RuntimeError, match="Filesystem storage requires local worker authentication"
+    ):
+        object_storage_from_environment(environment, local_authentication=False)
+
+
+def test_storage_configuration_rejects_missing_or_unknown_values() -> None:
+    with pytest.raises(RuntimeError, match="LOCAL_STORAGE_ROOT is required"):
+        object_storage_from_environment(
+            {"WORKER_STORAGE_BACKEND": "filesystem"}, local_authentication=True
+        )
+
+    with pytest.raises(RuntimeError, match="must be r2 or filesystem"):
+        object_storage_from_environment(
+            {"WORKER_STORAGE_BACKEND": "unknown"}, local_authentication=True
+        )
+
+    with pytest.raises(RuntimeError, match="R2_ACCESS_KEY_ID"):
+        object_storage_from_environment({}, local_authentication=False)
 
 
 def test_task_endpoint_validates_and_acquires_only_the_task_contract() -> None:

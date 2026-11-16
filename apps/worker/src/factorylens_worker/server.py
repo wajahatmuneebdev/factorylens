@@ -1,8 +1,12 @@
 import json
 import os
+import signal
+import threading
 import time
+from collections.abc import Mapping
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
@@ -30,7 +34,11 @@ from factorylens_worker.processing_pipeline import (
     FfmpegFrameSampler,
     InspectionProcessingPipeline,
 )
-from factorylens_worker.storage import R2ObjectStorage
+from factorylens_worker.storage import (
+    LocalFilesystemStorage,
+    ObjectStorage,
+    R2ObjectStorage,
+)
 from factorylens_worker.task_execution import (
     TaskExecutionOutcome,
     TaskExecutor,
@@ -79,6 +87,45 @@ def positive_environment_integer(name: str, default: int) -> int:
     if value < 1:
         raise RuntimeError(f"{name} must be a positive integer")
     return value
+
+
+def object_storage_from_environment(
+    environment: Mapping[str, str], *, local_authentication: bool
+) -> ObjectStorage:
+    backend = environment.get("WORKER_STORAGE_BACKEND", "r2")
+    if backend == "filesystem":
+        if not local_authentication:
+            raise RuntimeError(
+                "Filesystem storage requires local worker authentication"
+            )
+        root = environment.get("LOCAL_STORAGE_ROOT")
+        if not root:
+            raise RuntimeError("LOCAL_STORAGE_ROOT is required for filesystem storage")
+        return LocalFilesystemStorage(Path(root))
+    if backend != "r2":
+        raise RuntimeError("WORKER_STORAGE_BACKEND must be r2 or filesystem")
+
+    required_r2_values = {
+        name: environment.get(name)
+        for name in (
+            "R2_ACCESS_KEY_ID",
+            "R2_ACCOUNT_ID",
+            "R2_BUCKET",
+            "R2_SECRET_ACCESS_KEY",
+        )
+    }
+    missing_r2_values = [
+        name for name, value in required_r2_values.items() if not value
+    ]
+    if missing_r2_values:
+        raise RuntimeError(f"{', '.join(missing_r2_values)} are required")
+
+    return R2ObjectStorage(
+        account_id=required_r2_values["R2_ACCOUNT_ID"] or "",
+        access_key_id=required_r2_values["R2_ACCESS_KEY_ID"] or "",
+        secret_access_key=required_r2_values["R2_SECRET_ACCESS_KEY"] or "",
+        bucket=required_r2_values["R2_BUCKET"] or "",
+    )
 
 
 class WorkerHandler(BaseHTTPRequestHandler):
@@ -333,26 +380,8 @@ def main() -> None:
     else:
         raise RuntimeError("WORKER_AUTH_MODE must be google or local")
 
-    required_r2_values = {
-        name: os.environ.get(name)
-        for name in (
-            "R2_ACCESS_KEY_ID",
-            "R2_ACCOUNT_ID",
-            "R2_BUCKET",
-            "R2_SECRET_ACCESS_KEY",
-        )
-    }
-    missing_r2_values = [
-        name for name, value in required_r2_values.items() if not value
-    ]
-    if missing_r2_values:
-        raise RuntimeError(f"{', '.join(missing_r2_values)} are required")
-
-    storage = R2ObjectStorage(
-        account_id=required_r2_values["R2_ACCOUNT_ID"] or "",
-        access_key_id=required_r2_values["R2_ACCESS_KEY_ID"] or "",
-        secret_access_key=required_r2_values["R2_SECRET_ACCESS_KEY"] or "",
-        bucket=required_r2_values["R2_BUCKET"] or "",
+    storage = object_storage_from_environment(
+        os.environ, local_authentication=auth_mode == "local"
     )
     workflow_configuration = workflow_configuration_from_environment()
     media_limits = MediaLimits(
@@ -388,9 +417,16 @@ def main() -> None:
     server.identity_verifier = identity_verifier
     write_structured_log("info", "worker_listening", host=host, port=port)
 
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    previous_handlers = {
+        signum: signal.signal(signum, request_shutdown)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
-        pass
     finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
         server.server_close()

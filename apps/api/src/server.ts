@@ -1,4 +1,5 @@
 import { drizzle } from "drizzle-orm/postgres-js";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { z } from "zod";
 
@@ -114,36 +115,39 @@ async function start(): Promise<void> {
             token: environment.LOCAL_WORKER_TASK_TOKEN ?? "",
           }),
         });
-  const app = createApp({
-    appOrigin,
-    callbackUrl: new URL("/auth/google/callback", appOrigin),
-    oidcProvider,
-    inspections: new PostgresInspectionRepository(database),
-    inspectionPolicy: {
-      maxActiveInspections: environment.MAX_ACTIVE_INSPECTIONS_PER_USER,
-      maxAttempts: environment.MAX_PROCESSING_ATTEMPTS,
-      maxUploadBytes: environment.MAX_UPLOAD_BYTES,
+  const app = createApp(
+    {
+      appOrigin,
+      callbackUrl: new URL("/auth/google/callback", appOrigin),
+      oidcProvider,
+      inspections: new PostgresInspectionRepository(database),
+      inspectionPolicy: {
+        maxActiveInspections: environment.MAX_ACTIVE_INSPECTIONS_PER_USER,
+        maxAttempts: environment.MAX_PROCESSING_ATTEMPTS,
+        maxUploadBytes: environment.MAX_UPLOAD_BYTES,
+      },
+      internalIdentityVerifier: new GoogleServiceIdentityVerifier(
+        environment.MAINTENANCE_OIDC_AUDIENCE,
+        environment.MAINTENANCE_SERVICE_ACCOUNT_EMAIL,
+      ),
+      maintenance: new PostgresMaintenanceRepository(database),
+      maintenancePolicy: {
+        abandonedUploadAgeMs:
+          environment.MAINTENANCE_ABANDONED_UPLOAD_HOURS * 60 * 60 * 1000,
+        batchSize: environment.MAINTENANCE_BATCH_SIZE,
+        dispatchGraceMs: environment.MAINTENANCE_DISPATCH_GRACE_SECONDS * 1000,
+        maxDurationMs: environment.MAINTENANCE_MAX_DURATION_SECONDS * 1000,
+        retentionAgeMs:
+          environment.MAINTENANCE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      },
+      objectAccess: storage,
+      storage,
+      store,
+      taskDispatcher,
+      transactionSecret: environment.AUTH_COOKIE_SECRET,
     },
-    internalIdentityVerifier: new GoogleServiceIdentityVerifier(
-      environment.MAINTENANCE_OIDC_AUDIENCE,
-      environment.MAINTENANCE_SERVICE_ACCOUNT_EMAIL,
-    ),
-    maintenance: new PostgresMaintenanceRepository(database),
-    maintenancePolicy: {
-      abandonedUploadAgeMs:
-        environment.MAINTENANCE_ABANDONED_UPLOAD_HOURS * 60 * 60 * 1000,
-      batchSize: environment.MAINTENANCE_BATCH_SIZE,
-      dispatchGraceMs: environment.MAINTENANCE_DISPATCH_GRACE_SECONDS * 1000,
-      maxDurationMs: environment.MAINTENANCE_MAX_DURATION_SECONDS * 1000,
-      retentionAgeMs:
-        environment.MAINTENANCE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    },
-    objectAccess: storage,
-    storage,
-    store,
-    taskDispatcher,
-    transactionSecret: environment.AUTH_COOKIE_SECRET,
-  });
+    fileURLToPath(new URL("../../web/dist", import.meta.url)),
+  );
 
   const server = app.listen(environment.API_PORT, environment.API_HOST, () => {
     writeStructuredLog("info", "api_listening", {
