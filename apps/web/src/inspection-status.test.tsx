@@ -204,7 +204,11 @@ describe("inspection processing status", () => {
     ).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith(
       `/api/inspections/${inspectionId}/cancel`,
-      { method: "POST" },
+      {
+        body: "{}",
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
     );
   });
 
@@ -239,7 +243,11 @@ describe("inspection processing status", () => {
     expect(await screen.findByText("Queued")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith(
       `/api/inspections/${inspectionId}/retry`,
-      { method: "POST" },
+      {
+        body: "{}",
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
     );
   });
 

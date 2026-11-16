@@ -52,6 +52,9 @@ responsive, synchronized Canvas annotations over HTML video playback, with
 local class and confidence filters plus an artifact-derived event timeline.
 They also present the committed aggregate and media summary with explicit,
 feedback-backed JSON and CSV downloads.
+The critical browser journey is covered by deterministic Playwright tests that
+use an isolated development-auth server, in-memory storage and task adapters,
+and fixture inference without cloud accounts.
 Owner-scoped cancellation and retry commands are also connected. A bounded,
 service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
@@ -74,6 +77,12 @@ Install both workspaces from a clean checkout:
 ```sh
 npm ci
 uv sync --project apps/worker --locked
+```
+
+Install the Playwright browser once before running the end-to-end suite:
+
+```sh
+npx playwright install chromium
 ```
 
 Start every local service together with `npm run dev`, or start one at a
@@ -144,6 +153,7 @@ The root commands apply consistently across the npm and uv workspaces:
 | `npm run format`       | Format TypeScript, JSON, and Python                |
 | `npm run format:check` | Check formatting without changing files            |
 | `npm test`             | Run the standard TypeScript and Python tests       |
+| `npm run test:e2e`     | Run the isolated Playwright critical-path tests    |
 | `npm run check`        | Run the standard clean-checkout verification suite |
 
 The PostgreSQL migration integration test is separate because it requires an
