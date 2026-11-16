@@ -67,7 +67,10 @@ requests, durable jobs, task deliveries, and worker outcomes. Managed Cloud Run,
 Cloud Tasks, maintenance-snapshot, and R2 views plus repeated-symptom alert
 definitions are documented in [OPERATIONS.md](./OPERATIONS.md).
 The two production container images now package the combined web/API service
-and the media worker at their separate scaling boundaries.
+and the media worker at their separate scaling boundaries. The reproducible
+Neon and private R2 production procedure, pool budget, retention settings,
+migration command, and credential-safe storage smoke check are documented in
+[DATA_SERVICES.md](./DATA_SERVICES.md).
 
 ## Development
 
@@ -108,7 +111,9 @@ worker Workflow settings and run
 `uv run --project apps/worker pytest -m roboflow_integration` to exercise the
 selected deployed Workflow. Run
 `npm run configure:r2 --workspace @factorylens/api` with the API environment to
-restrict browser access to the configured application origin. The test database
+restrict browser access to the configured application origin and install the
+safe bucket lifecycle rule; this one-time command uses the separate
+configuration credentials documented in `DATA_SERVICES.md`. The test database
 variable described below is required only for its opt-in integration test. Set
 `TASK_DISPATCHER=cloud-tasks` in production and run
 `npm run configure:tasks --workspace @factorylens/api` with deployment

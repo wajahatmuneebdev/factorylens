@@ -7,6 +7,7 @@ import {
   R2ObjectStorage,
   StorageObjectNotFoundError,
   factoryLensR2CorsConfiguration,
+  factoryLensR2LifecycleConfiguration,
   sourceObjectKey,
 } from "../src/storage.js";
 
@@ -23,6 +24,7 @@ interface AllowedRequest {
 class R2TestDouble {
   corsConfigurationXml: string | null = null;
   endpoint = "";
+  lifecycleConfigurationXml: string | null = null;
 
   private readonly allowedRequests = new Map<string, AllowedRequest>();
   private readonly objects = new Map<string, Buffer>();
@@ -92,6 +94,16 @@ class R2TestDouble {
         return this.error(405, "MethodNotAllowed");
       }
       this.corsConfigurationXml = (await this.readBody(request)).toString(
+        "utf8",
+      );
+      return { status: 200 };
+    }
+
+    if (requestUrl.searchParams.has("lifecycle")) {
+      if (request.method !== "PUT") {
+        return this.error(405, "MethodNotAllowed");
+      }
+      this.lifecycleConfigurationXml = (await this.readBody(request)).toString(
         "utf8",
       );
       return { status: 200 };
@@ -357,5 +369,24 @@ describe("R2 storage contract", () => {
       "<AllowedMethod>PUT</AllowedMethod>",
     );
     expect(testDouble.corsConfigurationXml).not.toContain("attacker.example");
+  });
+
+  it("configures cleanup for incomplete uploads without age-expiring inspection objects", async () => {
+    expect(factoryLensR2LifecycleConfiguration()).toEqual({
+      Rules: [
+        {
+          AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 },
+          Filter: { Prefix: "" },
+          ID: "abort-incomplete-uploads",
+          Status: "Enabled",
+        },
+      ],
+    });
+
+    await storage.configureLifecycle();
+    expect(testDouble.lifecycleConfigurationXml).toContain(
+      "<DaysAfterInitiation>1</DaysAfterInitiation>",
+    );
+    expect(testDouble.lifecycleConfigurationXml).not.toContain("<Expiration>");
   });
 });

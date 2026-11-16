@@ -10,8 +10,10 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   PutBucketCorsCommand,
+  PutBucketLifecycleConfigurationCommand,
   PutObjectCommand,
   S3Client,
+  type BucketLifecycleConfiguration,
   type CORSConfiguration,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -164,6 +166,19 @@ export function factoryLensR2CorsConfiguration(
           "etag",
         ],
         MaxAgeSeconds: 3600,
+      },
+    ],
+  };
+}
+
+export function factoryLensR2LifecycleConfiguration(): BucketLifecycleConfiguration {
+  return {
+    Rules: [
+      {
+        AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 },
+        Filter: { Prefix: "" },
+        ID: "abort-incomplete-uploads",
+        Status: "Enabled",
       },
     ],
   };
@@ -324,6 +339,15 @@ export class R2ObjectStorage implements ObjectStorage, ObjectAccessAuthorizer {
       new PutBucketCorsCommand({
         Bucket: this.bucket,
         CORSConfiguration: factoryLensR2CorsConfiguration(appOrigin),
+      }),
+    );
+  }
+
+  async configureLifecycle(): Promise<void> {
+    await this.client.send(
+      new PutBucketLifecycleConfigurationCommand({
+        Bucket: this.bucket,
+        LifecycleConfiguration: factoryLensR2LifecycleConfiguration(),
       }),
     );
   }
