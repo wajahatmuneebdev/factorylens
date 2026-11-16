@@ -28,6 +28,7 @@ const environmentSchema = z.object({
   APP_ORIGIN: z.url(),
   AUTH_COOKIE_SECRET: z.string().min(32),
   DATABASE_URL: z.string().startsWith("postgresql://"),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(20).default(5),
   GOOGLE_OIDC_CLIENT_ID: z.string().min(1),
   GOOGLE_OIDC_CLIENT_SECRET: z.string().min(1),
   MAINTENANCE_OIDC_AUDIENCE: z.url(),
@@ -87,7 +88,9 @@ async function start(): Promise<void> {
     );
   }
 
-  const databaseClient = postgres(environment.DATABASE_URL);
+  const databaseClient = postgres(environment.DATABASE_URL, {
+    max: environment.DATABASE_POOL_MAX,
+  });
   const database = drizzle(databaseClient, { schema });
   const store = new PostgresAuthStore(database);
   let oidcProvider;

@@ -5,10 +5,10 @@ import { R2ObjectStorage } from "./storage.js";
 
 const environmentSchema = z.object({
   APP_ORIGIN: z.url(),
-  R2_ACCESS_KEY_ID: z.string().min(1),
   R2_ACCOUNT_ID: z.string().regex(/^[0-9a-f]{32}$/i),
   R2_BUCKET: z.string().min(1),
-  R2_SECRET_ACCESS_KEY: z.string().min(1),
+  R2_CONFIGURATION_ACCESS_KEY_ID: z.string().min(1),
+  R2_CONFIGURATION_SECRET_ACCESS_KEY: z.string().min(1),
 });
 
 async function configure(): Promise<void> {
@@ -26,13 +26,15 @@ async function configure(): Promise<void> {
   }
 
   const storage = new R2ObjectStorage({
-    accessKeyId: environment.R2_ACCESS_KEY_ID,
+    accessKeyId: environment.R2_CONFIGURATION_ACCESS_KEY_ID,
     bucket: environment.R2_BUCKET,
     endpoint: `https://${environment.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    secretAccessKey: environment.R2_SECRET_ACCESS_KEY,
+    secretAccessKey: environment.R2_CONFIGURATION_SECRET_ACCESS_KEY,
   });
   await storage.configureCors(appOrigin);
+  await storage.configureLifecycle();
   writeStructuredLog("info", "r2_cors_configured");
+  writeStructuredLog("info", "r2_lifecycle_configured");
 }
 
 void configure().catch((error: unknown) => {
