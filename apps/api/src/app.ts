@@ -33,7 +33,10 @@ export interface AppDependencies extends AuthDependencies {
   taskDispatcher?: TaskDispatcher;
 }
 
-export function createApp(dependencies?: AppDependencies): express.Express {
+export function createApp(
+  dependencies?: AppDependencies,
+  staticRoot?: string,
+): express.Express {
   const app = express();
 
   app.disable("x-powered-by");
@@ -89,6 +92,25 @@ export function createApp(dependencies?: AppDependencies): express.Express {
         taskDispatcher: dependencies.taskDispatcher,
       });
     }
+  }
+
+  if (staticRoot) {
+    app.use(express.static(staticRoot, { index: false }));
+    app.use((request, response, next) => {
+      const reservedPath = ["/api", "/auth", "/internal"].some(
+        (prefix) =>
+          request.path === prefix || request.path.startsWith(`${prefix}/`),
+      );
+      if (
+        request.method !== "GET" ||
+        reservedPath ||
+        request.accepts("html") === false
+      ) {
+        next();
+        return;
+      }
+      response.sendFile("index.html", { root: staticRoot }, next);
+    });
   }
 
   return app;
