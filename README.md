@@ -76,6 +76,12 @@ The Google execution path is also reproducible through
 Cloud Run services, dedicated runtime and caller identities, Secret Manager
 entries, the bounded Cloud Tasks queue, authenticated maintenance scheduling,
 and project budget alerts are configured with conservative scaling caps.
+The media envelope now has a repeatable credential-free benchmark covering
+supported pass-through and normalization paths, boundary memory, prediction
+artifacts, and browser loading. Its local measurements and the required
+deployed capacity gate are documented in
+[PROCESSING_ENVELOPE.md](./PROCESSING_ENVELOPE.md); real-user uploads remain
+gated on that deployed run.
 Pull requests and the main branch now run the complete application, migration,
 contract, browser, and infrastructure validation suite in GitHub Actions. A
 successful main-branch validation can enter the protected production
@@ -163,18 +169,19 @@ acknowledged after their safe failure is persisted.
 
 The root commands apply consistently across the npm and uv workspaces:
 
-| Command                   | Purpose                                            |
-| ------------------------- | -------------------------------------------------- |
-| `npm run build`           | Build the TypeScript packages and applications     |
-| `npm run build:images`    | Build immutable web and worker production images   |
-| `npm run typecheck`       | Type-check TypeScript and Python                   |
-| `npm run lint`            | Lint TypeScript, Markdown, and Python              |
-| `npm run format`          | Format TypeScript, JSON, and Python                |
-| `npm run format:check`    | Check formatting without changing files            |
-| `npm test`                | Run the standard TypeScript and Python tests       |
-| `npm run test:e2e`        | Run the isolated Playwright critical-path tests    |
-| `npm run test:containers` | Build and smoke-test both production images        |
-| `npm run check`           | Run the standard clean-checkout verification suite |
+| Command                      | Purpose                                            |
+| ---------------------------- | -------------------------------------------------- |
+| `npm run build`              | Build the TypeScript packages and applications     |
+| `npm run build:images`       | Build immutable web and worker production images   |
+| `npm run benchmark:envelope` | Run the local media-envelope benchmark             |
+| `npm run typecheck`          | Type-check TypeScript and Python                   |
+| `npm run lint`               | Lint TypeScript, Markdown, and Python              |
+| `npm run format`             | Format TypeScript, JSON, and Python                |
+| `npm run format:check`       | Check formatting without changing files            |
+| `npm test`                   | Run the standard TypeScript and Python tests       |
+| `npm run test:e2e`           | Run the isolated Playwright critical-path tests    |
+| `npm run test:containers`    | Build and smoke-test both production images        |
+| `npm run check`              | Run the standard clean-checkout verification suite |
 
 GitHub pull requests run `npm run check`, the disposable PostgreSQL migration
 integration test, deterministic Playwright tests, and Terraform validation.

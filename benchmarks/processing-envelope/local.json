@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-16T14:19:21Z",
+  "environment": {
+    "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.14.7",
+    "cpuCount": 14,
+    "ffmpeg": "ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers"
+  },
+  "generation": {
+    "short-vp8-webm": {
+      "generationMs": 123.156,
+      "sourceBytes": 270238
+    },
+    "average-vp9-webm": {
+      "generationMs": 754.708,
+      "sourceBytes": 5180458
+    },
+    "average-h264-mp4": {
+      "generationMs": 223.79,
+      "sourceBytes": 11905281
+    },
+    "boundary-h264-mp4": {
+      "generationMs": 1200.776,
+      "sourceBytes": 262144000
+    },
+    "normalize-mpeg4-avi": {
+      "generationMs": 201.589,
+      "sourceBytes": 8271124
+    }
+  },
+  "cases": [
+    {
+      "case": {
+        "name": "short-vp8-webm",
+        "duration_seconds": 10,
+        "width": 640,
+        "height": 360,
+        "container": "webm",
+        "video_codec": "vp8",
+        "audio_codec": "none",
+        "prediction_density": 1,
+        "role": "short"
+      },
+      "sourceBytes": 270238,
+      "normalized": false,
+      "normalizedBytes": null,
+      "frameCount": 50,
+      "predictionCount": 50,
+      "artifactBytesGzip": 813,
+      "artifactBytesJson": 8393,
+      "timingsMs": {
+        "uploadLocalFilesystem": 1.009,
+        "mediaStage": 45.915,
+        "ffprobe": 44.739,
+        "normalization": 0.0,
+        "frameSamplingAndWorkflow": 61.721,
+        "syntheticWorkflowCalls": 0.521,
+        "artifact": 1.485,
+        "endToEnd": 110.13
+      },
+      "peakRssBytes": 71286784,
+      "peakChildRssBytes": 57819136
+    },
+    {
+      "case": {
+        "name": "average-vp9-webm",
+        "duration_seconds": 60,
+        "width": 1280,
+        "height": 720,
+        "container": "webm",
+        "video_codec": "vp9",
+        "audio_codec": "opus",
+        "prediction_density": 4,
+        "role": "average"
+      },
+      "sourceBytes": 5180458,
+      "normalized": false,
+      "normalizedBytes": null,
+      "frameCount": 300,
+      "predictionCount": 1200,
+      "artifactBytesGzip": 4995,
+      "artifactBytesJson": 152148,
+      "timingsMs": {
+        "uploadLocalFilesystem": 2.75,
+        "mediaStage": 53.704,
+        "ffprobe": 49.66,
+        "normalization": 0.0,
+        "frameSamplingAndWorkflow": 330.365,
+        "syntheticWorkflowCalls": 5.533,
+        "artifact": 6.908,
+        "endToEnd": 393.727
+      },
+      "peakRssBytes": 96124928,
+      "peakChildRssBytes": 132792320
+    },
+    {
+      "case": {
+        "name": "average-h264-mp4",
+        "duration_seconds": 60,
+        "width": 1280,
+        "height": 720,
+        "container": "mp4",
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "prediction_density": 8,
+        "role": "average"
+      },
+      "sourceBytes": 11905281,
+      "normalized": false,
+      "normalizedBytes": null,
+      "frameCount": 300,
+      "predictionCount": 2400,
+      "artifactBytesGzip": 8618,
+      "artifactBytesJson": 292548,
+      "timingsMs": {
+        "uploadLocalFilesystem": 10.059,
+        "mediaStage": 52.634,
+        "ffprobe": 48.404,
+        "normalization": 0.0,
+        "frameSamplingAndWorkflow": 321.275,
+        "syntheticWorkflowCalls": 9.765,
+        "artifact": 11.174,
+        "endToEnd": 395.142
+      },
+      "peakRssBytes": 95961088,
+      "peakChildRssBytes": 171524096
+    },
+    {
+      "case": {
+        "name": "boundary-h264-mp4",
+        "duration_seconds": 300,
+        "width": 1920,
+        "height": 1080,
+        "container": "mp4",
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "prediction_density": 12,
+        "role": "boundary"
+      },
+      "sourceBytes": 262144000,
+      "normalized": false,
+      "normalizedBytes": null,
+      "frameCount": 1500,
+      "predictionCount": 18000,
+      "artifactBytesGzip": 57348,
+      "artifactBytesJson": 2161653,
+      "timingsMs": {
+        "uploadLocalFilesystem": 136.423,
+        "mediaStage": 148.052,
+        "ffprobe": 47.086,
+        "normalization": 0.0,
+        "frameSamplingAndWorkflow": 3201.37,
+        "syntheticWorkflowCalls": 69.025,
+        "artifact": 68.42,
+        "endToEnd": 3554.265
+      },
+      "peakRssBytes": 518668288,
+      "peakChildRssBytes": 319750144
+    },
+    {
+      "case": {
+        "name": "normalize-mpeg4-avi",
+        "duration_seconds": 60,
+        "width": 1280,
+        "height": 720,
+        "container": "avi",
+        "video_codec": "mpeg4",
+        "audio_codec": "none",
+        "prediction_density": 4,
+        "role": "normalization"
+      },
+      "sourceBytes": 8271124,
+      "normalized": true,
+      "normalizedBytes": 7993262,
+      "frameCount": 300,
+      "predictionCount": 1200,
+      "artifactBytesGzip": 4989,
+      "artifactBytesJson": 152148,
+      "timingsMs": {
+        "uploadLocalFilesystem": 3.515,
+        "mediaStage": 2567.78,
+        "ffprobe": 95.375,
+        "normalization": 2462.383,
+        "frameSamplingAndWorkflow": 325.959,
+        "syntheticWorkflowCalls": 5.46,
+        "artifact": 6.711,
+        "endToEnd": 2903.965
+      },
+      "peakRssBytes": 89407488,
+      "peakChildRssBytes": 284409856
+    }
+  ],
+  "browser": {
+    "case": "boundary-h264-mp4",
+    "artifactBytesGzip": 57348,
+    "artifactBytesJson": 2161653,
+    "frameCount": 1500,
+    "iterations": 5,
+    "medianMs": {
+      "fetch": 1.800000011920929,
+      "decompress": 0.9000000357627869,
+      "parse": 5.099999964237213,
+      "total": 7.599999964237213
+    },
+    "medianHeapDeltaBytes": 1974252,
+    "medianHeapUsedAfterBytes": 2526536
+  },
+  "limitations": [
+    "Local filesystem upload does not measure browser-to-R2 network throughput.",
+    "Synthetic Workflow timings exclude Roboflow network latency and quota use.",
+    "Database, queue, and Cloud Run measurements require the controlled deployed run."
+  ]
+}

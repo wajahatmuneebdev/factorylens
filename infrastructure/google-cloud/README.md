@@ -35,6 +35,10 @@ a project-scoped billing budget. Neon and R2 remain governed by
 - The queue's one-task concurrency, three attempts, 10–300 second backoff, and
   30-minute deadline match the API and worker environment contract. The worker
   timeout cannot be configured below the task deadline.
+- Upload, duration, resolution, active-work, attempt, and retention values are
+  validated Terraform inputs. Their checked defaults match the local envelope
+  in [`PROCESSING_ENVELOPE.md`](../../PROCESSING_ENVELOPE.md); complete its
+  deployed capacity gate before enabling real-user uploads.
 - The billing budget alerts at 50%, 80%, and 100% actual spend and 100%
   forecasted spend. It complements, but does not automatically shut down, the
   conservative Cloud Run and queue caps.

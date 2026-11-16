@@ -17,16 +17,16 @@ locals {
     CLOUD_TASKS_TARGET_URL                 = "${google_cloud_run_v2_service.worker.uri}/internal/tasks/process"
     DATABASE_POOL_MAX                      = "5"
     GOOGLE_OIDC_CLIENT_ID                  = var.google_oidc_client_id
-    MAINTENANCE_ABANDONED_UPLOAD_HOURS     = "24"
+    MAINTENANCE_ABANDONED_UPLOAD_HOURS     = tostring(var.abandoned_upload_hours)
     MAINTENANCE_BATCH_SIZE                 = "50"
     MAINTENANCE_DISPATCH_GRACE_SECONDS     = "300"
     MAINTENANCE_MAX_DURATION_SECONDS       = "50"
     MAINTENANCE_OIDC_AUDIENCE              = local.maintenance_oidc_audience
-    MAINTENANCE_RETENTION_DAYS             = "30"
+    MAINTENANCE_RETENTION_DAYS             = tostring(var.terminal_retention_days)
     MAINTENANCE_SERVICE_ACCOUNT_EMAIL      = google_service_account.scheduler.email
-    MAX_ACTIVE_INSPECTIONS_PER_USER        = "3"
+    MAX_ACTIVE_INSPECTIONS_PER_USER        = tostring(var.max_active_inspections_per_user)
     MAX_PROCESSING_ATTEMPTS                = tostring(var.max_processing_attempts)
-    MAX_UPLOAD_BYTES                       = "262144000"
+    MAX_UPLOAD_BYTES                       = tostring(var.max_upload_bytes)
     R2_ACCOUNT_ID                          = var.r2_account_id
     R2_BUCKET                              = var.r2_bucket
     TASK_DISPATCHER                        = "cloud-tasks"
@@ -34,10 +34,10 @@ locals {
 
   worker_environment = {
     CLOUD_TASKS_SERVICE_ACCOUNT_EMAIL = google_service_account.tasks.email
-    MAX_MEDIA_DURATION_MS             = "300000"
-    MAX_MEDIA_HEIGHT                  = "1080"
-    MAX_MEDIA_WIDTH                   = "1920"
-    MAX_UPLOAD_BYTES                  = "262144000"
+    MAX_MEDIA_DURATION_MS             = tostring(var.max_media_duration_ms)
+    MAX_MEDIA_HEIGHT                  = tostring(var.max_media_height)
+    MAX_MEDIA_WIDTH                   = tostring(var.max_media_width)
+    MAX_UPLOAD_BYTES                  = tostring(var.max_upload_bytes)
     R2_ACCOUNT_ID                     = var.r2_account_id
     R2_BUCKET                         = var.r2_bucket
     WORKER_AUTH_MODE                  = "google"
