@@ -1,0 +1,253 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows:
+      - Validation
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, scan, migrate, and promote
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: production
+    env:
+      IMAGE_VERSION: ${{ github.event.workflow_run.head_sha }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev
+      REPOSITORY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/factorylens
+
+    steps:
+      - name: Check out the validated revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Authenticate to Google without a service-account key
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Configure Artifact Registry authentication
+        run: gcloud auth configure-docker "$REGISTRY" --quiet
+
+      - name: Build and push immutable images once
+        id: images
+        run: |
+          IMAGE_VERSION="$IMAGE_VERSION" npm run build:images
+
+          web_tag="$REPOSITORY/web:$IMAGE_VERSION"
+          worker_tag="$REPOSITORY/worker:$IMAGE_VERSION"
+          docker tag "factorylens-web:$IMAGE_VERSION" "$web_tag"
+          docker tag "factorylens-worker:$IMAGE_VERSION" "$worker_tag"
+          docker push "$web_tag"
+          docker push "$worker_tag"
+
+          web_digest=$(gcloud artifacts docker images describe "$web_tag" --format='value(image_summary.digest)')
+          worker_digest=$(gcloud artifacts docker images describe "$worker_tag" --format='value(image_summary.digest)')
+          test -n "$web_digest"
+          test -n "$worker_digest"
+
+          echo "web=$REPOSITORY/web@$web_digest" >> "$GITHUB_OUTPUT"
+          echo "worker=$REPOSITORY/worker@$worker_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Scan the web image
+        id: scan_web
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.images.outputs.web }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Scan the worker image
+        id: scan_worker
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.images.outputs.worker }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Set up Node.js for the reviewed migration
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked migration dependencies
+        run: npm ci
+
+      - name: Apply reviewed database migrations
+        id: migration
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: npm run db:migrate --workspace @factorylens/api
+
+      - name: Deploy and smoke-test candidate revisions
+        id: candidates
+        env:
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+          WORKER_IMAGE: ${{ steps.images.outputs.worker }}
+        run: |
+          set -eu
+          candidate_tag="candidate-$(printf '%s' "$IMAGE_VERSION" | cut -c 1-12)"
+
+          gcloud run services update factorylens-worker \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$WORKER_IMAGE" \
+            --no-traffic \
+            --tag "$candidate_tag" \
+            --quiet
+          worker_revision=$(gcloud run services describe factorylens-worker \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.latestCreatedRevisionName)')
+
+          gcloud run services update factorylens-web \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$WEB_IMAGE" \
+            --no-traffic \
+            --tag "$candidate_tag" \
+            --quiet
+          web_revision=$(gcloud run services describe factorylens-web \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.latestCreatedRevisionName)')
+
+          for revision in "$worker_revision" "$web_revision"; do
+            gcloud run revisions describe "$revision" \
+              --project "$PROJECT_ID" \
+              --region "$REGION" \
+              --format=json |
+              jq -e '.status.conditions[] | select(.type == "Ready" and .status == "True")' >/dev/null
+          done
+
+          web_candidate_url=$(gcloud run services describe factorylens-web \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format=json |
+            jq -r --arg tag "$candidate_tag" '.status.traffic[] | select(.tag == $tag) | .url')
+          worker_candidate_url=$(gcloud run services describe factorylens-worker \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format=json |
+            jq -r --arg tag "$candidate_tag" '.status.traffic[] | select(.tag == $tag) | .url')
+          test -n "$web_candidate_url"
+          test -n "$worker_candidate_url"
+
+          attempt=0
+          until curl --fail --silent --show-error "$web_candidate_url/health" |
+            jq -e '.status == "ok"' >/dev/null; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 12 ]; then
+              echo "Web candidate failed its health smoke check" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          worker_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "$worker_candidate_url/health" || true)
+          case "$worker_status" in
+            403|404) ;;
+            *)
+              echo "Worker candidate was unexpectedly public (HTTP $worker_status)" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "tag=$candidate_tag" >> "$GITHUB_OUTPUT"
+          echo "web_revision=$web_revision" >> "$GITHUB_OUTPUT"
+          echo "worker_revision=$worker_revision" >> "$GITHUB_OUTPUT"
+
+      - name: Promote smoke-tested revisions
+        id: promotion
+        env:
+          CANDIDATE_TAG: ${{ steps.candidates.outputs.tag }}
+          WEB_REVISION: ${{ steps.candidates.outputs.web_revision }}
+          WORKER_REVISION: ${{ steps.candidates.outputs.worker_revision }}
+        run: |
+          gcloud run services update-traffic factorylens-worker \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-revisions "$WORKER_REVISION=100" \
+            --quiet
+          gcloud run services update-traffic factorylens-web \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-revisions "$WEB_REVISION=100" \
+            --quiet
+
+          web_url=$(gcloud run services describe factorylens-web \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.url)')
+          curl --fail --retry 6 --retry-all-errors --retry-delay 5 \
+            --silent --show-error "$web_url/health" |
+            jq -e '.status == "ok"' >/dev/null
+
+          gcloud run services update-traffic factorylens-worker \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --remove-tags "$CANDIDATE_TAG" \
+            --quiet
+          gcloud run services update-traffic factorylens-web \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --remove-tags "$CANDIDATE_TAG" \
+            --quiet
+
+      - name: Summarize production deployment
+        if: always()
+        env:
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+          WORKER_IMAGE: ${{ steps.images.outputs.worker }}
+        run: |
+          {
+            echo "## Production deployment"
+            echo
+            echo "| Item | Result |"
+            echo "| --- | --- |"
+            echo "| Validated revision | \`$IMAGE_VERSION\` |"
+            echo "| Immutable image build | **${{ steps.images.outcome }}** |"
+            echo "| Web image scan | **${{ steps.scan_web.outcome }}** |"
+            echo "| Worker image scan | **${{ steps.scan_worker.outcome }}** |"
+            echo "| Reviewed migration | **${{ steps.migration.outcome }}** |"
+            echo "| Candidate smoke checks | **${{ steps.candidates.outcome }}** |"
+            echo "| Production promotion | **${{ steps.promotion.outcome }}** |"
+            echo "| Overall | **${{ job.status }}** |"
+            echo
+            echo "Web image: \`${WEB_IMAGE:-not built}\`"
+            echo
+            echo "Worker image: \`${WORKER_IMAGE:-not built}\`"
+            echo
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "Migrations completed before both candidate revisions passed smoke checks and received production traffic."
+            else
+              echo "Production promotion did not complete. Inspect the first failed step; validation, scanning, migration, and candidate smoke failures prevent the promotion step from running."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

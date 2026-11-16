@@ -14,6 +14,27 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "github_repository" {
+  description = "GitHub owner/repository allowed to deploy through workload identity federation."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must use the owner/repository format."
+  }
+}
+
+variable "github_deployment_branch" {
+  description = "Only this GitHub branch may exchange an identity for the production deployer."
+  type        = string
+  default     = "main"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._/-]+$", var.github_deployment_branch))
+    error_message = "github_deployment_branch must be a valid non-empty branch name."
+  }
+}
+
 variable "billing_account_id" {
   description = "Billing account ID used for the project-scoped budget."
   type        = string

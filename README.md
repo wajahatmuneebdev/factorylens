@@ -76,6 +76,12 @@ The Google execution path is also reproducible through
 Cloud Run services, dedicated runtime and caller identities, Secret Manager
 entries, the bounded Cloud Tasks queue, authenticated maintenance scheduling,
 and project budget alerts are configured with conservative scaling caps.
+Pull requests and the main branch now run the complete application, migration,
+contract, browser, and infrastructure validation suite in GitHub Actions. A
+successful main-branch validation can enter the protected production
+environment, where keyless GitHub workload identity builds and scans immutable
+images, applies reviewed migrations, and smoke-tests separate web and worker
+candidate revisions before promoting either image.
 
 ## Development
 
@@ -169,6 +175,12 @@ The root commands apply consistently across the npm and uv workspaces:
 | `npm run test:e2e`        | Run the isolated Playwright critical-path tests    |
 | `npm run test:containers` | Build and smoke-test both production images        |
 | `npm run check`           | Run the standard clean-checkout verification suite |
+
+GitHub pull requests run `npm run check`, the disposable PostgreSQL migration
+integration test, deterministic Playwright tests, and Terraform validation.
+Production delivery runs only for a validated `main` revision and requires the
+protected environment and workload identity setup documented in
+[`infrastructure/google-cloud/README.md`](./infrastructure/google-cloud/README.md).
 
 Production images are built from the repository root so the shared lockfiles
 and contracts remain in scope while `.dockerignore` excludes local media,

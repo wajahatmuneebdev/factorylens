@@ -6,16 +6,19 @@ locals {
   }
 
   enabled_services = toset([
+    "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
     "cloudbilling.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "cloudscheduler.googleapis.com",
     "cloudtasks.googleapis.com",
+    "containerscanning.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "serviceusage.googleapis.com",
+    "sts.googleapis.com",
   ])
 
   web_secret_environment = {
