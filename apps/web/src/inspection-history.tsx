@@ -10,7 +10,13 @@ import { type ChangeEvent, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { PageState } from "./components/PageState";
-import { Badge, Button, Progress, TableFrame } from "./components/ui";
+import {
+  Badge,
+  Button,
+  Notification,
+  Progress,
+  TableFrame,
+} from "./components/ui";
 
 class InspectionListError extends Error {
   constructor(readonly status: number) {
@@ -82,7 +88,7 @@ function InspectionTable({
   label: string;
 }) {
   return (
-    <TableFrame>
+    <TableFrame aria-label={label} tabIndex={0}>
       <table>
         <caption className="sr-only">{label}</caption>
         <thead>
@@ -150,7 +156,7 @@ export function RecentInspections() {
   if (signedOut(query.error)) return <Navigate replace to="/sign-in" />;
   if (query.isPending)
     return <PageState kind="loading" title="Loading recent inspections" />;
-  if (query.isError)
+  if (query.isError && !query.data)
     return (
       <PageState
         actionLabel="Try again"
@@ -173,10 +179,20 @@ export function RecentInspections() {
     );
   }
   return (
-    <InspectionTable
-      inspections={query.data.inspections}
-      label="Recent inspections"
-    />
+    <>
+      {query.isRefetchError ? (
+        <Notification tone="warning">
+          <strong>Recent inspections may be out of date.</strong>
+          <span>
+            FactoryLens will keep the last loaded view while reconnecting.
+          </span>
+        </Notification>
+      ) : null}
+      <InspectionTable
+        inspections={query.data.inspections}
+        label="Recent inspections"
+      />
+    </>
   );
 }
 
@@ -195,7 +211,7 @@ export function InspectionHistory() {
   if (signedOut(query.error)) return <Navigate replace to="/sign-in" />;
   if (query.isPending)
     return <PageState kind="loading" title="Loading inspection history" />;
-  if (query.isError)
+  if (query.isError && !query.data)
     return (
       <PageState
         actionLabel="Try again"
@@ -231,6 +247,14 @@ export function InspectionHistory() {
 
   return (
     <>
+      {query.isRefetchError ? (
+        <Notification tone="warning">
+          <strong>Inspection history may be out of date.</strong>
+          <span>
+            FactoryLens is showing the last loaded page while reconnecting.
+          </span>
+        </Notification>
+      ) : null}
       <div className="filter-bar">
         <label className="search-field">
           <span className="sr-only">Search inspection history</span>

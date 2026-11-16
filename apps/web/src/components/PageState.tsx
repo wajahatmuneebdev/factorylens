@@ -54,7 +54,9 @@ export function PageState({
   return (
     <section
       aria-busy={kind === "loading" ? true : undefined}
+      aria-live={kind === "error" ? "assertive" : "polite"}
       className={`page-state page-state--${kind}`}
+      role={kind === "error" ? "alert" : "status"}
     >
       <span aria-hidden="true" className="page-state__mark">
         {content.mark}

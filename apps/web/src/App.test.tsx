@@ -96,6 +96,22 @@ describe("application shell", () => {
     ).toBeInTheDocument();
   });
 
+  it("moves focus to main content after client-side navigation", async () => {
+    renderRoute("/dashboard");
+
+    await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+    fireEvent.click(
+      screen.getAllByRole("link", { name: "New inspection" })[0]!,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { level: 1, name: "New inspection" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("main")).toHaveFocus();
+    });
+  });
+
   it("offers the approved video sources and workflow", () => {
     renderRoute("/inspections/new");
 
@@ -118,13 +134,16 @@ describe("application shell", () => {
   it("opens and closes the shared confirmation dialog", () => {
     renderRoute("/account");
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    const trigger = screen.getByRole("button", { name: "Sign out" });
+    trigger.focus();
+    fireEvent.click(trigger);
     expect(screen.getByRole("dialog")).toHaveAccessibleName(
       "Leave FactoryLens?",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("revokes the session before returning to sign-in", async () => {

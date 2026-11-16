@@ -104,7 +104,7 @@ export function InspectionStatus({ inspectionId }: { inspectionId: string }) {
   if (query.isPending) {
     return <PageState kind="loading" title="Loading inspection status" />;
   }
-  if (query.isError) {
+  if (query.isError && !query.data) {
     return (
       <PageState
         actionLabel="Try again"
@@ -127,12 +127,25 @@ export function InspectionStatus({ inspectionId }: { inspectionId: string }) {
 
   return (
     <>
+      {query.isRefetchError ? (
+        <Notification tone="warning">
+          <strong>Inspection status may be out of date.</strong>
+          <span>
+            FactoryLens is showing the last durable state while reconnecting.
+          </span>
+        </Notification>
+      ) : null}
       <header className="page-header">
         <div>
           <p className="eyebrow">Inspection status</p>
           <h1>{inspection.title}</h1>
         </div>
-        <Badge tone={presentation.tone}>{presentation.label}</Badge>
+        <span aria-live="polite" role="status">
+          <Badge tone={presentation.tone}>{presentation.label}</Badge>
+          <span className="sr-only">
+            {stageLabel(inspection)}, {inspection.progress.percent}% complete
+          </span>
+        </span>
       </header>
       <div className="detail-grid">
         {inspection.status === "completed" ? (
@@ -153,7 +166,11 @@ export function InspectionStatus({ inspectionId }: { inspectionId: string }) {
             </div>
           </section>
         )}
-        <aside aria-labelledby="status-title" className="panel status-card">
+        <aside
+          aria-busy={command.isPending}
+          aria-labelledby="status-title"
+          className="panel status-card"
+        >
           <div>
             <p className="eyebrow">Current stage</p>
             <h2 id="status-title">{stageLabel(inspection)}</h2>
