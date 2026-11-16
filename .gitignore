@@ -31,5 +31,15 @@ __pycache__/
 .env.*
 !.env.example
 
+# Terraform working data and local configuration
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+crash.log
+crash.*.log
+
 # Local FactoryLens runtime data
 .factorylens/
