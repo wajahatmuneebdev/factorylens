@@ -5,7 +5,7 @@ import {
   type PredictionArtifactV1,
 } from "@factorylens/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { PageState } from "./components/PageState";
 import { Button, Notification } from "./components/ui";
@@ -582,6 +582,7 @@ export function PredictionVideo({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const annotationDescriptionId = useId();
   const [frame, setFrame] = useState<PredictionFrame | null>(() =>
     selectPredictionFrame(artifact.frames, 0),
   );
@@ -672,7 +673,14 @@ export function PredictionVideo({
             aspectRatio: `${artifact.source.width} / ${artifact.source.height}`,
           }}
         >
-          <video controls playsInline ref={videoRef} src={videoUrl}>
+          <video
+            aria-describedby={annotationDescriptionId}
+            aria-label="Inspection video with synchronized prediction annotations"
+            controls
+            playsInline
+            ref={videoRef}
+            src={videoUrl}
+          >
             Your browser does not support HTML video playback.
           </video>
           <canvas aria-hidden="true" ref={canvasRef} />
@@ -690,6 +698,28 @@ export function PredictionVideo({
             {artifact.source.width} × {artifact.source.height}
           </span>
         </div>
+        <section className="sr-only" id={annotationDescriptionId}>
+          <h3>Visible video annotations</h3>
+          {filteredFrame ? (
+            <>
+              <p>
+                At {(filteredFrame.timestampMs / 1000).toFixed(1)} seconds,{" "}
+                {filteredFrame.predictions.length} predictions match the current
+                filters.
+              </p>
+              <ul>
+                {filteredFrame.predictions.map((prediction, index) => (
+                  <li key={`${prediction.className}-${index}`}>
+                    {prediction.className},{" "}
+                    {Math.round(prediction.confidence * 100)}% confidence
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>No sampled predictions are available at this time.</p>
+          )}
+        </section>
         <div className="investigation-controls">
           <fieldset className="class-filters">
             <legend>Visible classes</legend>
@@ -775,7 +805,11 @@ export function PredictionVideo({
             </p>
           ) : null}
           {selectedVisibleEvent ? (
-            <div className="event-context" role="status">
+            <div
+              aria-label="Selected event details"
+              className="event-context"
+              role="status"
+            >
               <strong>{selectedVisibleEvent.label}</strong>
               <span>
                 {(selectedVisibleEvent.startMs / 1000).toFixed(1)}s–

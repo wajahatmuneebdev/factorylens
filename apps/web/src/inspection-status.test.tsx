@@ -65,10 +65,15 @@ function response(value: Inspection, status = 200) {
   });
 }
 
-function renderStatus() {
+function renderStatus(cachedInspection?: Inspection) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, retryDelay: 0 } },
   });
+  if (cachedInspection) {
+    client.setQueryData(["inspection", inspectionId], {
+      inspection: cachedInspection,
+    });
+  }
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -125,6 +130,20 @@ describe("inspection processing status", () => {
         screen.getByRole("button", { name: "Retry inspection" }),
       ).toBeEnabled();
     }
+  });
+
+  it("presents retry wait as an intentional announced state", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      response(inspection("processing", "retry_wait")),
+    );
+    renderStatus();
+
+    expect(
+      await screen.findByRole("heading", { name: "Waiting to retry" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Waiting to retry, 62% complete",
+    );
   });
 
   it.each([
@@ -263,6 +282,20 @@ describe("inspection processing status", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Try again" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the last durable status visible when a refresh is degraded", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 503 }),
+    );
+    renderStatus(inspection("processing", "running"));
+
+    expect(
+      await screen.findByText("Inspection status may be out of date."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Analyzing recording" }),
     ).toBeInTheDocument();
   });
 });

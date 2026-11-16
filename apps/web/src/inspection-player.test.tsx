@@ -149,6 +149,12 @@ describe("event timeline", () => {
     expect(screen.getByLabelText("Minimum confidence")).toHaveValue("50");
     expect(screen.getByText("1 of 1 visible")).toBeInTheDocument();
     expect(
+      screen.getByLabelText(
+        "Inspection video with synchronized prediction annotations",
+      ),
+    ).toHaveAccessibleDescription(/1 predictions match the current filters/);
+    expect(screen.getByText("NO-Hardhat, 91% confidence")).toBeInTheDocument();
+    expect(
       screen.getByText(/1 visible prediction at 0.0s/),
     ).toBeInTheDocument();
 

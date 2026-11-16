@@ -1,6 +1,7 @@
 import {
   type ButtonHTMLAttributes,
   type HTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
   type ReactNode,
   cloneElement,
@@ -116,6 +117,7 @@ export function Dialog({
   title,
 }: DialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const descriptionId = useId();
 
@@ -126,11 +128,39 @@ export function Dialog({
       return;
     }
 
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     dialog.showModal();
+
+    return () => previousFocusRef.current?.focus();
   }, [open]);
 
   if (!open) {
     return null;
+  }
+
+  function keepFocusInDialog(event: ReactKeyboardEvent<HTMLDialogElement>) {
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const controls = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (!first || !last) return;
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   return (
@@ -139,6 +169,7 @@ export function Dialog({
       aria-labelledby={titleId}
       className="dialog"
       onCancel={onClose}
+      onKeyDown={keepFocusInDialog}
       ref={dialogRef}
     >
       <div className="dialog__heading">
@@ -146,7 +177,12 @@ export function Dialog({
           <p className="eyebrow">Confirmation</p>
           <h2 id={titleId}>{title}</h2>
         </div>
-        <Button aria-label="Close dialog" onClick={onClose} variant="quiet">
+        <Button
+          aria-label="Close dialog"
+          autoFocus
+          onClick={onClose}
+          variant="quiet"
+        >
           <span aria-hidden="true">×</span>
         </Button>
       </div>
@@ -196,7 +232,7 @@ export function TableFrame({
   ...props
 }: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className="table-frame" {...props}>
+    <div className="table-frame" role="region" {...props}>
       {children}
     </div>
   );

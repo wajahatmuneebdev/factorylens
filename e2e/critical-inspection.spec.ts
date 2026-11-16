@@ -1,13 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const videoFixture = {
-  buffer: Buffer.from(
-    "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIAEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggHq7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjEuNy4xMDBXQYxMYXZmNjEuNy4xMDBEiYhAn0AAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WIrMfqNvF/UOCcgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4Q7msoA4JCwgRC6gRCagQJVsIRVuYEBElTDZ/tzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYxLjcuMTAwc3PWY8CLY8WIrMfqNvF/UOBnyKFFo4dFTkNPREVSRIeUTGF2YzYxLjE5LjEwMSBsaWJ2cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAyLjAwMDAwMDAwMAAfQ7Z1wueBAKOjgQAAgBACAJ0BKhAAEAAARwiFhYiZhIgCAgAMDWAA/v+rUICjmIED6ACxAQAFEKwAGAAwP/QMAAAA/va5ABxTu2uRu4+zgQC3iveBAfGCAaPwgQM=",
-    "base64",
-  ),
-  mimeType: "video/webm",
-  name: "assembly-line.webm",
-};
+import { videoFixture } from "./support/video-fixture.js";
 
 async function signIn(page: Page): Promise<void> {
   await page.goto("/sign-in");
@@ -56,7 +49,9 @@ test("uploads and investigates a completed inspection", async ({ page }) => {
   await event.click();
   await expect(event).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/1 visible prediction at 0\.0s/)).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("peak confidence 93%");
+  await expect(
+    page.getByRole("status", { name: "Selected event details" }),
+  ).toContainText("peak confidence 93%");
 
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download CSV" }).click();

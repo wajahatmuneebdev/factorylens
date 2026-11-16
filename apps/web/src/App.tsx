@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   BrowserRouter,
@@ -8,6 +8,7 @@ import {
   Outlet,
   Route,
   Routes,
+  useLocation,
 } from "react-router-dom";
 
 import {
@@ -108,9 +109,20 @@ function PrimaryNav() {
   );
 }
 
+function RouteFocus() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    document.getElementById("main-content")?.focus();
+  }, [pathname]);
+
+  return null;
+}
+
 function AppShell() {
   return (
     <div className="app-shell">
+      <RouteFocus />
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>

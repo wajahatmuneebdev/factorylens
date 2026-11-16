@@ -55,6 +55,10 @@ feedback-backed JSON and CSV downloads.
 The critical browser journey is covered by deterministic Playwright tests that
 use an isolated development-auth server, in-memory storage and task adapters,
 and fixture inference without cloud accounts.
+The product routes now include keyboard focus management, screen-reader state
+and Canvas alternatives, reduced-motion and zoom-safe responsive behavior, and
+automated WCAG checks. The repeatable manual keyboard and zoom pass is recorded
+in [ACCESSIBILITY.md](./ACCESSIBILITY.md).
 Owner-scoped cancellation and retry commands are also connected. A bounded,
 service-authenticated
 maintenance endpoint now reconciles pending dispatch, stale leases, abandoned
