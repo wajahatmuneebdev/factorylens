@@ -29,9 +29,9 @@ a project-scoped billing budget. Neon and R2 remain governed by
   repository, update Cloud Run services, and act as only the two runtime
   identities. Its workload identity provider accepts tokens only from the
   configured repository, `main` branch, and checked `deploy.yml` workflow.
-- Artifact Registry rejects mutable tags and enables Google container scanning.
-  The deployment also blocks on HIGH or CRITICAL findings from its pinned image
-  scanner before any migration or Cloud Run update.
+- Artifact Registry rejects mutable tags. The deployment scans each immutable
+  image digest with its pinned Trivy action and blocks on HIGH or CRITICAL
+  findings before any migration or Cloud Run update.
 - The queue's one-task concurrency, three attempts, 10–300 second backoff, and
   30-minute deadline match the API and worker environment contract. The worker
   timeout cannot be configured below the task deadline.
