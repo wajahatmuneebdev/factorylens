@@ -21,6 +21,7 @@ case "$image_version" in
 esac
 
 docker build \
+  --platform linux/amd64 \
   --progress plain \
   --build-arg "IMAGE_VERSION=$image_version" \
   --build-arg "SOURCE_REVISION=$source_revision" \
@@ -29,6 +30,7 @@ docker build \
   "$repository_root"
 
 docker build \
+  --platform linux/amd64 \
   --progress plain \
   --build-arg "IMAGE_VERSION=$image_version" \
   --build-arg "SOURCE_REVISION=$source_revision" \

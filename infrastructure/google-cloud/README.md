@@ -51,9 +51,34 @@ application token validation to generated service hostnames.
 
 Prerequisites are Terraform 1.9 or newer, Application Default Credentials with
 permission to manage the listed resources and billing budget, a billing-enabled
-Google Cloud project, and the completed data service procedure. Configure a
+Google Cloud project, Neon connection strings, the private R2 bucket and its
+runtime credentials, and the selected production Roboflow Workflow and API
+key. R2 CORS deliberately remains unconfigured until the full apply confirms
+the reviewed application origin serves the deployed web service. Configure a
 protected remote Terraform backend before using this root from automation;
 backend creation is intentionally outside the application stack.
+
+Use this production bootstrap order:
+
+1. Create the Neon database and retain its pooled runtime URL and direct
+   migration URL separately.
+2. Create the private R2 bucket and bucket-scoped runtime token, but do not
+   configure browser CORS.
+3. Select and verify the Roboflow Workflow, deployed provider version ID,
+   workspace, fingerprint, and API key.
+4. Set `application_origin` to the reviewed deterministic `run.app` origin and
+   create the Google OAuth web client. Its final callback can wait until that
+   origin is confirmed after deployment.
+5. Bootstrap Artifact Registry and immutable images, then Secret Manager and
+   every initial secret version as described below.
+6. Apply the complete Terraform plan and confirm `application_origin` returns a
+   successful `/health` response. Cloud Run can also report an alternate stable
+   URL in the `web_url` output; it need not be textually identical.
+7. Configure and smoke-test R2 with `application_origin`, then register
+   `${application_origin}/auth/google/callback` on the Google OAuth client.
+8. Populate and protect the GitHub `production` environment from the Terraform
+   outputs. The first successful deployment applies the initial Neon schema
+   before promoting either service.
 
 Copy the non-secret example and set its placeholders:
 
@@ -74,7 +99,7 @@ terraform apply -target=google_artifact_registry_repository.images
 
 cd ../..
 project_id=factorylens-production
-region=us-central1
+region=us-east4
 repository="${region}-docker.pkg.dev/$project_id/factorylens"
 image_version="bootstrap-$(git rev-parse HEAD)"
 
@@ -172,6 +197,11 @@ For each validated revision, the deployment workflow:
    worker's private-ingress boundary before assigning production traffic; and
 6. verifies the promoted web health endpoint and writes the images and result
    to the GitHub Actions job summary.
+
+Terraform uses the bootstrap image values only when it creates each Cloud Run
+service. Afterward, GitHub Actions owns the two image fields while Terraform
+continues to own every other service setting; the image-only lifecycle rule
+prevents a later infrastructure apply from rolling back a deployed revision.
 
 A validation, scan, migration, or candidate smoke failure prevents promotion.
 The workflow deliberately does not perform automatic rollback, create preview

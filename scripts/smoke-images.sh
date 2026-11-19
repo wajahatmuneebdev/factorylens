@@ -38,6 +38,12 @@ docker image inspect "$web_image" \
 docker image inspect "$worker_image" \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}} {{.Config.User}}' |
   grep -Fx "$source_revision factorylens" >/dev/null
+docker image inspect "$web_image" \
+  --format '{{.Os}}/{{.Architecture}}' |
+  grep -Fx 'linux/amd64' >/dev/null
+docker image inspect "$worker_image" \
+  --format '{{.Os}}/{{.Architecture}}' |
+  grep -Fx 'linux/amd64' >/dev/null
 docker run --rm --entrypoint ffmpeg "$worker_image" -version >/dev/null
 docker run --rm --entrypoint ffprobe "$worker_image" -version >/dev/null
 

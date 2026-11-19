@@ -1,23 +1,24 @@
 project_id         = "factorylens-production"
-region             = "us-central1"
+region             = "us-east4"
 billing_account_id = "000000-000000-000000"
 
 github_repository        = "wajahatmuneebdev/factorylens"
 github_deployment_branch = "main"
 
 # Use an immutable tag or digest produced by the image build.
-web_image    = "us-central1-docker.pkg.dev/factorylens-production/factorylens/web@sha256:REPLACE"
-worker_image = "us-central1-docker.pkg.dev/factorylens-production/factorylens/worker@sha256:REPLACE"
+web_image    = "us-east4-docker.pkg.dev/factorylens-production/factorylens/web@sha256:REPLACE"
+worker_image = "us-east4-docker.pkg.dev/factorylens-production/factorylens/worker@sha256:REPLACE"
 
-application_origin    = "https://factorylens.example"
+application_origin    = "https://factorylens-web-874221858225.us-east4.run.app"
 google_oidc_client_id = "REPLACE.apps.googleusercontent.com"
 
 r2_account_id = "00000000000000000000000000000000"
 r2_bucket     = "factorylens-private"
 
 workflow_endpoint    = "https://serverless.roboflow.com"
-workflow_workspace   = "REPLACE"
-workflow_fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+workflow_workspace   = "factorylens-uzfw1"
+workflow_version_id  = "1794990512449"
+workflow_fingerprint = "sha256:f18ade6ea1b86bf6e3b245a2329b57d67bbcc2491facd78d55f669c9170ba0a1"
 
 # Locally benchmarked candidate envelope. These may be made stricter, but
 # increasing them beyond these values requires a new benchmark and architecture

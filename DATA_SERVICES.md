@@ -1,7 +1,10 @@
 # Production data services
 
 This procedure creates and verifies the single Neon database and private
-Cloudflare R2 bucket approved for FactoryLens. Run it from the repository root;
+Cloudflare R2 bucket approved for FactoryLens. Provisioning is staged: prepare
+the database and private bucket before Google Cloud, then configure browser
+CORS and run the storage smoke check only after the reviewed application origin
+serves the deployed Cloud Run service. Run commands from the repository root;
 do not commit connection strings or credentials.
 
 ## Capacity and retention contract
@@ -45,34 +48,37 @@ maintenance transaction owns the approved terminal-retention policy.
    - `MIGRATION_DATABASE_URL`: the direct hostname without `-pooler`; expose it
      only to the migration job or operator, also with `sslmode=require`.
 
-3. Apply the reviewed migrations through the direct endpoint:
-
-   ```sh
-   npm run db:migrate --workspace @factorylens/api
-   ```
-
-4. Confirm the command logs `database_migrations_applied`, then inspect the
-   Neon tables view for `users`, `sessions`, `inspections`, `jobs`, and the
-   `drizzle` migration journal. Remove `MIGRATION_DATABASE_URL` from the runtime
-   service environment; application startup never uses it.
+3. Keep the pooled URL ready for the web and worker Secret Manager entries, and
+   keep the direct URL only for the protected GitHub production environment as
+   `MIGRATION_DATABASE_URL`. Do not add the direct URL to either runtime.
+4. Let the first protected deployment apply the reviewed migrations before it
+   promotes a Cloud Run revision. After that deployment logs
+   `database_migrations_applied`, inspect the Neon tables view for `users`,
+   `sessions`, `inspections`, `jobs`, and the `drizzle` migration journal.
 
 ## Cloudflare R2
 
-1. Create one bucket named `factorylens-private` in the production account.
-   Leave the public `r2.dev` URL disabled and do not attach a custom domain.
-2. Create two R2 API tokens:
-
-   - a temporary **Admin Read & Write** token for bucket configuration;
-   - an **Object Read & Write** token restricted to `factorylens-private` for
-     the web/API and worker runtimes.
-
-   Store only the runtime access key ID and secret in the two services as
-   `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Set `R2_ACCOUNT_ID` and
-   `R2_BUCKET=factorylens-private` alongside them.
-
-3. Temporarily export the configuration token as
-   `R2_CONFIGURATION_ACCESS_KEY_ID` and
-   `R2_CONFIGURATION_SECRET_ACCESS_KEY`, export the HTTPS `APP_ORIGIN`, and run:
+1. Before Google Cloud provisioning, create one Standard-class bucket named
+   `factorylens-private` with the Eastern North America location hint and the
+   default jurisdiction. Leave the public `r2.dev` URL disabled and do not
+   attach a custom domain.
+2. Create an **Object Read & Write** account token restricted to
+   `factorylens-private` for the web/API and worker runtimes. Record the account
+   ID, access key ID, and secret access key securely. The two services receive
+   the runtime values later through separate Secret Manager entries as
+   `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`; both also receive
+   `R2_ACCOUNT_ID` and `R2_BUCKET=factorylens-private` as non-secret settings.
+   Do not configure CORS yet.
+3. After the full Terraform apply, export the reviewed `application_origin` as
+   `APP_ORIGIN` and confirm `curl --fail --silent --show-error
+   "$APP_ORIGIN/health"` succeeds. Use that deterministic URL as the canonical
+   browser, R2 CORS, and Google OAuth origin. Terraform's `web_url` output can
+   be Cloud Run's alternate stable service URL and does not need to be textually
+   identical.
+4. Create a temporary **Admin Read & Write** R2 token. Export its S3 credentials
+   as `R2_CONFIGURATION_ACCESS_KEY_ID` and
+   `R2_CONFIGURATION_SECRET_ACCESS_KEY`; also export `R2_ACCOUNT_ID`,
+   `R2_BUCKET=factorylens-private`, and the confirmed HTTPS `APP_ORIGIN`. Run:
 
    ```sh
    npm run configure:r2 --workspace @factorylens/api
@@ -82,7 +88,7 @@ maintenance transaction owns the approved terminal-retention policy.
    `APP_ORIGIN` and installs the non-destructive lifecycle rule. Revoke the
    configuration token after the command succeeds.
 
-4. With only the bucket-scoped runtime credentials exported, run:
+5. With only the bucket-scoped runtime credentials exported, run:
 
    ```sh
    npm run smoke:r2 --workspace @factorylens/api
@@ -98,5 +104,6 @@ maintenance transaction owns the approved terminal-retention policy.
 Record the Neon project and branch IDs, R2 bucket name, service maximums, and
 the date and operator for the migration, R2 configuration, and smoke commands
 in the private deployment change record. Record secret resource names, not
-secret values. Re-run the migration and both R2 commands after creating a new
-production environment or changing its application origin.
+secret values. Re-run the R2 configuration and smoke commands after creating a
+new production environment or changing its application origin. Reviewed
+database migrations continue to run through the protected deployment workflow.

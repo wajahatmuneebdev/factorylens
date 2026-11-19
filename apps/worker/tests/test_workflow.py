@@ -40,6 +40,7 @@ FIXTURE_PATH = (
 )
 SAMPLE_RGB_FRAME = bytes(1840 * 1080 * 3)
 PRODUCTION_FINGERPRINT = f"sha256:{'1' * 64}"
+PROVIDER_VERSION_ID = "1794990512449"
 
 
 @dataclass
@@ -140,6 +141,7 @@ def production_configuration() -> WorkflowConfiguration:
     return WorkflowConfiguration(
         endpoint="https://serverless.roboflow.com",
         workspace="factory-lens",
+        provider_version_id=PROVIDER_VERSION_ID,
         credential_source=WorkflowCredentialSource.ROBOFLOW_API_KEY,
         request_timeout_seconds=12.5,
         use_cache=False,
@@ -207,6 +209,7 @@ def test_runner_selection_uses_the_configured_endpoint_and_credential_source() -
         {
             "WORKFLOW_ENDPOINT": "https://inference.example.test/",
             "WORKFLOW_WORKSPACE": "factory-lens",
+            "WORKFLOW_VERSION_ID": PROVIDER_VERSION_ID,
             "WORKFLOW_CREDENTIAL_SOURCE": "roboflow-api-key",
             "WORKFLOW_FINGERPRINT": PRODUCTION_FINGERPRINT,
             "WORKFLOW_REQUEST_TIMEOUT_SECONDS": "12.5",
@@ -231,7 +234,8 @@ def test_runner_selection_uses_the_configured_endpoint_and_credential_source() -
     assert transport.calls[0]["timeout_seconds"] == 12.5
     payload = transport.calls[0]["payload"]
     assert isinstance(payload, dict)
-    assert payload["workflow_version_id"] == "1"
+    assert configuration.workflow_version == "1"
+    assert payload["workflow_version_id"] == PROVIDER_VERSION_ID
     assert payload["use_cache"] is False
     assert payload["enable_profiling"] is False
     assert payload["disable_sinks"] is True
@@ -281,6 +285,7 @@ def test_http_runner_can_use_a_credential_free_compatible_endpoint() -> None:
     configuration = WorkflowConfiguration(
         endpoint="http://127.0.0.1:9001",
         workspace="factory-lens",
+        provider_version_id=PROVIDER_VERSION_ID,
         credential_source=WorkflowCredentialSource.NONE,
         fingerprint=PRODUCTION_FINGERPRINT,
     )
@@ -294,6 +299,17 @@ def test_http_runner_can_use_a_credential_free_compatible_endpoint() -> None:
     runner.run_frame(production_input(), configuration)
 
     assert transport.calls[0]["api_key"] is None
+
+
+def test_http_workflow_requires_a_provider_version_id() -> None:
+    with pytest.raises(ValueError, match="provider version ID"):
+        workflow_configuration_from_environment(
+            {
+                "WORKFLOW_ENDPOINT": "https://serverless.roboflow.com",
+                "WORKFLOW_WORKSPACE": "factory-lens",
+                "WORKFLOW_FINGERPRINT": PRODUCTION_FINGERPRINT,
+            }
+        )
 
 
 def test_configured_credential_must_be_present() -> None:

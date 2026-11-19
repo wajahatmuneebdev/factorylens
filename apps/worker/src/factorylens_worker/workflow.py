@@ -44,6 +44,7 @@ class WorkflowConfiguration:
     key: Literal["factory-safety-v1"] = "factory-safety-v1"
     workflow_id: Literal["hard-hat-compliance-v1"] = "hard-hat-compliance-v1"
     workflow_version: Literal["1"] = "1"
+    provider_version_id: str | None = None
     model_id: Literal["construction-site-safety/27"] = "construction-site-safety/27"
     fingerprint: str = FIXTURE_WORKFLOW_FINGERPRINT
     workspace: str | None = None
@@ -73,6 +74,13 @@ class WorkflowConfiguration:
             ):
                 raise ValueError(
                     "Workflow workspace must be configured for an HTTP endpoint"
+                )
+            if (
+                not isinstance(self.provider_version_id, str)
+                or self.provider_version_id.strip() == ""
+            ):
+                raise ValueError(
+                    "Workflow provider version ID is required for an HTTP endpoint"
                 )
         elif self.workspace is not None:
             raise ValueError("Fixture Workflow endpoint does not use a workspace")
@@ -324,6 +332,7 @@ def workflow_configuration_from_environment(
     return WorkflowConfiguration(
         endpoint=endpoint,
         workspace=values.get("WORKFLOW_WORKSPACE"),
+        provider_version_id=values.get("WORKFLOW_VERSION_ID"),
         credential_source=credential_source,
         request_timeout_seconds=request_timeout_seconds,
         use_cache=_environment_boolean(values, "WORKFLOW_USE_CACHE", default=True),

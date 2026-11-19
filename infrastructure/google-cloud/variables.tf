@@ -11,7 +11,7 @@ variable "project_id" {
 variable "region" {
   description = "Region shared by Cloud Run, Cloud Tasks, and Cloud Scheduler."
   type        = string
-  default     = "us-central1"
+  default     = "us-east4"
 }
 
 variable "github_repository" {
@@ -119,6 +119,16 @@ variable "workflow_endpoint" {
 variable "workflow_workspace" {
   description = "Roboflow workspace containing the deployed Workflow."
   type        = string
+}
+
+variable "workflow_version_id" {
+  description = "Immutable provider ID of the deployed Roboflow Workflow version."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.workflow_version_id)) > 0 && trimspace(var.workflow_version_id) == var.workflow_version_id
+    error_message = "workflow_version_id must be a non-empty value without surrounding whitespace."
+  }
 }
 
 variable "workflow_fingerprint" {

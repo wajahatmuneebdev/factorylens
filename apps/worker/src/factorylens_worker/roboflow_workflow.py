@@ -173,7 +173,7 @@ class RoboflowWorkflowRunner:
         _raise_if_cancelled(is_cancelled)
         payload: dict[str, object] = {
             "inputs": {"image": {"type": "base64", "value": encoded_image}},
-            "workflow_version_id": configuration.workflow_version,
+            "workflow_version_id": configuration.provider_version_id,
             "use_cache": configuration.use_cache,
             "enable_profiling": False,
             "disable_sinks": True,

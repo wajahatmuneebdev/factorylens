@@ -48,6 +48,7 @@ locals {
     WORKFLOW_FINGERPRINT              = lower(var.workflow_fingerprint)
     WORKFLOW_REQUEST_TIMEOUT_SECONDS  = "30"
     WORKFLOW_USE_CACHE                = "true"
+    WORKFLOW_VERSION_ID               = var.workflow_version_id
     WORKFLOW_WORKSPACE                = var.workflow_workspace
   }
 }
@@ -138,6 +139,10 @@ resource "google_cloud_run_v2_service" "worker" {
     google_project_service.required,
     google_secret_manager_secret_iam_member.worker,
   ]
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
 }
 
 resource "google_cloud_run_v2_service" "web" {
@@ -227,6 +232,10 @@ resource "google_cloud_run_v2_service" "web" {
     google_secret_manager_secret_iam_member.web,
     google_service_account_iam_member.web_can_attach_tasks_identity,
   ]
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
 }
 
 resource "google_cloud_run_v2_service_iam_member" "web_public" {

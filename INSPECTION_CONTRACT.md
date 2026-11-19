@@ -33,20 +33,23 @@ send alerts, monitor live cameras, or judge compliance for other PPE.
 | --- | --- |
 | FactoryLens workflow key | `factory-safety-v1` |
 | Roboflow Workflow ID | `hard-hat-compliance-v1` |
-| Roboflow Workflow version | `1` |
+| FactoryLens Workflow contract version | `1` |
 | Detection model | `construction-site-safety/27` |
 
-The Roboflow workspace slug is deployment configuration because it is owned by
-the account hosting the Workflow; it is not a product identifier. The worker
-must invoke the exact Workflow ID and version above in the configured workspace.
-Creating or deploying that Workflow is outside this contract task.
+The Roboflow workspace slug and deployed provider version ID are deployment
+configuration because they are owned by the account hosting the Workflow; they
+are not product identifiers. The worker must invoke the exact Workflow ID and
+configured provider version in that workspace. The provider version remains
+separate from the FactoryLens contract version written to prediction artifacts.
 
 The selected public model is the Roboflow Universe
 [Construction Site Safety model](https://universe.roboflow.com/roboflow-universe-projects/construction-site-safety),
 version 27. The Workflow keeps only the model's `Person`, `Hardhat`, and
 `NO-Hardhat` classes. Its initial model confidence threshold is `0.50`. A model
-or Workflow version change requires a new fingerprint and fixture review; it
-must not silently change an existing processing generation.
+or deployed Workflow definition change requires a new provider version ID,
+fingerprint, and fixture review; it must not silently change an existing
+processing generation. Change the FactoryLens Workflow contract version only
+when the prediction contract itself changes.
 
 ### Required input
 
