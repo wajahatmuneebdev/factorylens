@@ -27,7 +27,7 @@ export const INSPECTION_STATUS_PRESENTATION = {
 >;
 
 export const INSPECTION_TRANSITIONS = {
-  awaiting_upload: ["queued"],
+  awaiting_upload: ["queued", "cancelled"],
   queued: ["processing", "cancelled"],
   processing: ["completed", "failed", "cancelled"],
   completed: [],

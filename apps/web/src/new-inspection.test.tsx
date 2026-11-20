@@ -135,6 +135,26 @@ describe("new inspection upload", () => {
     expect(submit).toBeDisabled();
   });
 
+  it("does not offer cancellation before the draft identifier is known", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    renderForm();
+    fillForm();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create and upload" }));
+
+    expect(
+      await screen.findByRole("progressbar", { name: "Creating inspection…" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Cancel upload" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Cancel" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("cancels before completion without confirming the upload", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -147,13 +167,43 @@ describe("new inspection upload", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Upload cancelled",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `/api/inspections/${inspectionId}/cancel`,
+      {
+        body: "{}",
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+    );
+  });
+
+  it("releases the awaiting-upload inspection after an R2 upload failure", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(createResponse());
+    renderForm();
+    fillForm();
+    fireEvent.click(screen.getByRole("button", { name: "Create and upload" }));
+    await waitFor(() => expect(MockXmlHttpRequest.instances).toHaveLength(1));
+
+    MockXmlHttpRequest.instances[0]!.respond(500);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The video upload was interrupted",
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `/api/inspections/${inspectionId}/cancel`,
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("distinguishes expired authorization and permits a fresh attempt", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(createResponse("2020-01-01T00:00:00.000Z"));
+      .mockResolvedValueOnce(createResponse("2020-01-01T00:00:00.000Z"))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(createResponse());
     renderForm();
     fillForm();
     fireEvent.click(screen.getByRole("button", { name: "Create and upload" }));
@@ -162,7 +212,8 @@ describe("new inspection upload", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     fireEvent.click(screen.getByRole("button", { name: "Create and upload" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(MockXmlHttpRequest.instances).toHaveLength(1));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("retries a recoverable creation failure", async () => {

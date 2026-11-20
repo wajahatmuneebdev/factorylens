@@ -943,7 +943,7 @@ describe("PostgreSQL migrations", () => {
       inspectionStatus: InspectionState;
       jobStatus: JobState | null;
     }[] = [
-      { allowed: false, inspectionStatus: "awaiting_upload", jobStatus: null },
+      { allowed: true, inspectionStatus: "awaiting_upload", jobStatus: null },
       { allowed: true, inspectionStatus: "queued", jobStatus: "queued" },
       { allowed: true, inspectionStatus: "processing", jobStatus: "running" },
       { allowed: false, inspectionStatus: "completed", jobStatus: "completed" },
@@ -969,24 +969,37 @@ describe("PostgreSQL migrations", () => {
         testCase.allowed ? 200 : 409,
       );
       if (testCase.allowed) {
-        expect(first.body.inspection.status).toBe(testCase.inspectionStatus);
+        const expectedInspectionStatus =
+          testCase.inspectionStatus === "awaiting_upload"
+            ? "cancelled"
+            : testCase.inspectionStatus;
+        expect(first.body.inspection.status).toBe(expectedInspectionStatus);
         const [afterFirst] = await sql<
           {
             cancel_requested_at: Date | null;
+            completed_at: string | null;
             inspection_status: string;
             prediction_object_key: string | null;
           }[]
         >`
           select
             inspections.status as inspection_status,
+            inspections.completed_at,
             inspections.prediction_object_key,
             jobs.cancel_requested_at
           from inspections
-          inner join jobs on jobs.inspection_id = inspections.id
+          left join jobs on jobs.inspection_id = inspections.id
           where inspections.id = ${fixture.inspectionId}
         `;
-        expect(afterFirst?.cancel_requested_at).not.toBeNull();
-        expect(afterFirst?.inspection_status).toBe(testCase.inspectionStatus);
+        if (testCase.inspectionStatus === "awaiting_upload") {
+          expect(afterFirst?.cancel_requested_at).toBeNull();
+          expect(new Date(afterFirst!.completed_at!).toISOString()).toBe(
+            currentTime.toISOString(),
+          );
+        } else {
+          expect(afterFirst?.cancel_requested_at).not.toBeNull();
+        }
+        expect(afterFirst?.inspection_status).toBe(expectedInspectionStatus);
         expect(afterFirst?.prediction_object_key).toBe(
           fixture.predictionObjectKey,
         );
@@ -1001,9 +1014,10 @@ describe("PostgreSQL migrations", () => {
         const [afterDuplicate] = await sql<
           { cancel_requested_at: Date | null }[]
         >`
-          select cancel_requested_at
-          from jobs
-          where inspection_id = ${fixture.inspectionId}
+          select jobs.cancel_requested_at
+          from inspections
+          left join jobs on jobs.inspection_id = inspections.id
+          where inspections.id = ${fixture.inspectionId}
         `;
         expect(afterDuplicate?.cancel_requested_at).toEqual(
           afterFirst?.cancel_requested_at,

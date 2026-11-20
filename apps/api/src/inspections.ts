@@ -52,6 +52,7 @@ import {
 import {
   type ObjectAccessAuthorizer,
   type ObjectStorage,
+  type StorageObjectMetadata,
   sourceObjectKey,
   StorageObjectNotFoundError,
 } from "./storage.js";
@@ -256,6 +257,32 @@ async function dispatchPendingJob(
   return marked;
 }
 
+async function cancelCreatedDraft(
+  dependencies: InspectionRouteDependencies,
+  ownerUserId: string,
+  inspectionId: string,
+  cancelledAt: Date,
+  currentRequestId: string,
+): Promise<void> {
+  try {
+    const cancelled = await dependencies.repository.requestOwnedCancellation(
+      ownerUserId,
+      inspectionId,
+      cancelledAt,
+    );
+    if (cancelled?.inspection.status !== "cancelled") {
+      throw new Error("Created inspection was not cancelled");
+    }
+  } catch (error) {
+    writeStructuredLog("error", "inspection_draft_cleanup_failed", {
+      errorType:
+        error instanceof Error ? error.constructor.name : "UnknownError",
+      inspectionId,
+      requestId: currentRequestId,
+    });
+  }
+}
+
 export function registerInspectionRoutes(
   app: Express,
   dependencies: InspectionRouteDependencies,
@@ -344,11 +371,29 @@ export function registerInspectionRoutes(
         return;
       }
 
-      try {
-        if (!directSource) {
-          const metadata = await dependencies.storage.metadata(
+      if (!directSource) {
+        let metadata: StorageObjectMetadata;
+        try {
+          metadata = await dependencies.storage.metadata(
             inspection.sourceObjectKey,
           );
+        } catch {
+          await cancelCreatedDraft(
+            dependencies,
+            authenticatedUser(request).id,
+            inspection.id,
+            now(),
+            requestId(request),
+          );
+          sendSafeError(response, 503, {
+            code: "storage_unavailable",
+            category: "retryable",
+            message: "Upload authorization is temporarily unavailable.",
+          });
+          return;
+        }
+
+        try {
           const completion = await dependencies.repository.completeOwnedUpload(
             authenticatedUser(request).id,
             inspection.id,
@@ -371,18 +416,34 @@ export function registerInspectionRoutes(
             upload: null,
           });
           return;
+        } catch {
+          sendSafeError(response, 503, {
+            code: "storage_unavailable",
+            category: "retryable",
+            message: "Upload authorization is temporarily unavailable.",
+          });
+          return;
         }
+      }
+
+      try {
         const upload = await dependencies.objectAccess.authorizeUpload(
           inspection.sourceObjectKey,
           directSource.contentType,
         );
+        if (!upload) throw new Error("Upload authorization was not created");
         response.status(201).json({
           inspection: inspectionResponse({ inspection, job: null }),
-          upload: upload
-            ? { ...upload, expiresAt: upload.expiresAt.toISOString() }
-            : null,
+          upload: { ...upload, expiresAt: upload.expiresAt.toISOString() },
         });
       } catch {
+        await cancelCreatedDraft(
+          dependencies,
+          authenticatedUser(request).id,
+          inspection.id,
+          now(),
+          requestId(request),
+        );
         sendSafeError(response, 503, {
           code: "storage_unavailable",
           category: "retryable",

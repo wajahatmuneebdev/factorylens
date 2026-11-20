@@ -48,6 +48,8 @@ function isActive(inspection: Inspection) {
 function stageLabel(inspection: Inspection) {
   if (inspection.job?.status === "retry_wait") return "Waiting to retry";
   if (inspection.job?.cancellationRequested) return "Cancellation requested";
+  if (inspection.status === "awaiting_upload")
+    return "Waiting for video upload";
   if (inspection.status === "queued") return "Waiting to begin";
   if (inspection.status === "completed") return "Inspection completed";
   if (inspection.status === "failed") return "Inspection failed";
@@ -120,7 +122,8 @@ export function InspectionStatus({ inspectionId }: { inspectionId: string }) {
   const inspection = query.data.inspection;
   const presentation = INSPECTION_STATUS_PRESENTATION[inspection.status];
   const canCancel =
-    isActive(inspection) && !inspection.job?.cancellationRequested;
+    (inspection.status === "awaiting_upload" || isActive(inspection)) &&
+    !inspection.job?.cancellationRequested;
   const canRetry =
     inspection.status === "failed" &&
     inspection.error?.category === "retryable";

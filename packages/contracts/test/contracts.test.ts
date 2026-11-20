@@ -180,6 +180,7 @@ describe("browser API contracts", () => {
 describe("lifecycle contracts", () => {
   it("allows only explicit inspection and job transitions", () => {
     expect(canTransitionInspection("awaiting_upload", "queued")).toBe(true);
+    expect(canTransitionInspection("awaiting_upload", "cancelled")).toBe(true);
     expect(canTransitionInspection("failed", "queued")).toBe(true);
     expect(canTransitionInspection("completed", "processing")).toBe(false);
     expect(canTransitionJob("running", "retry_wait")).toBe(true);

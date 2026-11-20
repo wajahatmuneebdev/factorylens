@@ -79,6 +79,19 @@ function upload(
   });
 }
 
+async function cancelDraft(inspectionId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/inspections/${inspectionId}/cancel`, {
+      body: "{}",
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function NewInspectionForm() {
   const navigate = useNavigate();
   const abortRef = useRef<AbortController | null>(null);
@@ -227,6 +240,7 @@ export function NewInspectionForm() {
     setError(null);
     setProgress(0);
     setStage("creating");
+    let createdDraftId: string | null = null;
     try {
       if (!attemptRef.current) {
         const response = await fetch("/api/inspections", {
@@ -242,6 +256,7 @@ export function NewInspectionForm() {
               "Inspection creation is temporarily unavailable.",
           );
         const created = CreateInspectionResponseSchema.parse(body);
+        createdDraftId = created.inspection.id;
         if (mode === "sample") {
           navigate(`/inspections/${created.inspection.id}`, {
             replace: true,
@@ -288,24 +303,33 @@ export function NewInspectionForm() {
         state: { queuedInspection: { title: validation.data.title } },
       });
     } catch (caught) {
+      const draft = attemptRef.current;
+      const draftId = draft && !draft.uploaded ? draft.id : createdDraftId;
+      const draftCancelled = draftId ? await cancelDraft(draftId) : true;
+      if (draftId) attemptRef.current = null;
+      const cleanupWarning = draftCancelled
+        ? ""
+        : " The incomplete inspection could not be cancelled automatically; cancel it from inspection history.";
+
       if (caught instanceof DOMException && caught.name === "AbortError") {
         setStage("editing");
         setProgress(0);
         setError(
-          "Upload cancelled. Your file has not been submitted for processing.",
+          `Upload cancelled. Your file has not been submitted for processing.${cleanupWarning}`,
         );
       } else if (caught instanceof Error && caught.message === "expired") {
-        attemptRef.current = null;
         setStage("expired");
         setError(
-          "Upload authorization expired. Start again to request a new secure upload.",
+          `Upload authorization expired. Start again to request a new secure upload.${cleanupWarning}`,
         );
       } else {
         setStage("failed");
         setError(
-          caught instanceof Error
-            ? caught.message
-            : "The upload could not be completed.",
+          `${
+            caught instanceof Error
+              ? caught.message
+              : "The upload could not be completed."
+          }${cleanupWarning}`,
         );
       }
     } finally {
@@ -501,18 +525,22 @@ export function NewInspectionForm() {
                     : 0
               }
             />
-            <Button
-              onClick={() => abortRef.current?.abort()}
-              variant="secondary"
-            >
-              Cancel upload
-            </Button>
+            {stage === "uploading" ? (
+              <Button
+                onClick={() => abortRef.current?.abort()}
+                variant="secondary"
+              >
+                Cancel upload
+              </Button>
+            ) : null}
           </div>
         ) : null}
         <div className="form-actions">
-          <Link className="button button--quiet" to="/dashboard">
-            Cancel
-          </Link>
+          {!busy ? (
+            <Link className="button button--quiet" to="/dashboard">
+              Cancel
+            </Link>
+          ) : null}
           {stage === "expired" || stage === "failed" ? (
             <Button
               onClick={() => {

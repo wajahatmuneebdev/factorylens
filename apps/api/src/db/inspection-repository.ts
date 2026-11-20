@@ -423,6 +423,23 @@ export class PostgresInspectionRepository implements InspectionApiRepository {
 
         return { inspection, job: job ?? null };
       }
+      if (inspection.status === "awaiting_upload") {
+        const [cancelledInspection] = await transaction
+          .update(schema.inspections)
+          .set({ completedAt: now, status: "cancelled", updatedAt: now })
+          .where(
+            and(
+              eq(schema.inspections.id, inspectionId),
+              eq(schema.inspections.ownerUserId, ownerUserId),
+              eq(schema.inspections.status, "awaiting_upload"),
+            ),
+          )
+          .returning();
+        if (!cancelledInspection) {
+          throw new InspectionCommandConflictError(inspection.status);
+        }
+        return { inspection: cancelledInspection, job: null };
+      }
       if (
         inspection.status !== "queued" &&
         inspection.status !== "processing"

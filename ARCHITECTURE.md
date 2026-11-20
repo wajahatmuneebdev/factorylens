@@ -276,7 +276,7 @@ Processing behavior is classified explicitly:
 
 The browser polls active inspections through TanStack Query. Polling stops on a terminal state and slows when the page is in the background. No persistent connection is required.
 
-`POST /api/inspections/:id/cancel` sets a durable cancellation flag. Cancellation is cooperative: the worker observes it at stage boundaries, records `cancelled`, and removes temporary output. Completed artifacts are not silently deleted by cancellation.
+`POST /api/inspections/:id/cancel` moves an incomplete `awaiting_upload` inspection directly to `cancelled`, or sets a durable cancellation flag after work has been queued. Queued and processing cancellation is cooperative: the worker observes it at stage boundaries, records `cancelled`, and removes temporary output. Completed artifacts are not silently deleted by cancellation.
 
 ### 5.6 Investigation playback
 
@@ -294,7 +294,7 @@ This flow performs no inference and makes no per-frame API request.
 ### 6.1 Inspection states
 
 ```text
-awaiting_upload
+awaiting_upload ----> cancelled
       |
       v
     queued -------> cancelled

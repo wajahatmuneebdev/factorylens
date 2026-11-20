@@ -275,12 +275,29 @@ class FakeInspectionRepository implements InspectionApiRepository {
     async (
       ownerUserId: string,
       inspectionId: string,
-    ): Promise<InspectionViewRecord | null> =>
-      this.records.find(
-        ({ inspection }) =>
-          inspection.ownerUserId === ownerUserId &&
-          inspection.id === inspectionId,
-      ) ?? null,
+      now: Date,
+    ): Promise<InspectionViewRecord | null> => {
+      const record =
+        this.records.find(
+          ({ inspection }) =>
+            inspection.ownerUserId === ownerUserId &&
+            inspection.id === inspectionId,
+        ) ??
+        this.uploads.find(
+          ({ inspection }) =>
+            inspection.ownerUserId === ownerUserId &&
+            inspection.id === inspectionId,
+        );
+      if (record?.inspection.status === "awaiting_upload") {
+        record.inspection = {
+          ...record.inspection,
+          completedAt: now,
+          status: "cancelled",
+          updatedAt: now,
+        };
+      }
+      return record ?? null;
+    },
   );
 
   readonly retryOwnedFailure = vi.fn(
@@ -472,6 +489,87 @@ describe("inspection API", () => {
       "samples/assembly-line-no-hard-hat.webm",
     );
     expect(repository.completeOwnedUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a created draft when direct upload authorization fails", async () => {
+    const repository = new FakeInspectionRepository();
+    const storage = new FakeStorage();
+    storage.authorizeUpload.mockRejectedValueOnce(
+      new Error("simulated signing failure"),
+    );
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage))
+        .post("/api/inspections")
+        .set("Origin", appOrigin.origin),
+    ).send({
+      title: "Upload signing failure",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "upload",
+        fileName: "line.webm",
+        contentType: "video/webm",
+        sizeBytes: 4096,
+      },
+    });
+
+    expect(response.status).toBe(503);
+    expect(repository.uploads[0]?.inspection.status).toBe("cancelled");
+    expect(repository.requestOwnedCancellation).toHaveBeenCalledWith(
+      owner.id,
+      repository.uploads[0]?.inspection.id,
+      currentTime,
+    );
+  });
+
+  it("cancels a prepared-sample draft when its source is unavailable", async () => {
+    const repository = new FakeInspectionRepository();
+
+    const response = await authenticated(
+      request(inspectionApp(repository))
+        .post("/api/inspections")
+        .set("Origin", appOrigin.origin),
+    ).send({
+      title: "Missing prepared sample",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "sample",
+        sampleKey: "assembly-line-no-hard-hat",
+      },
+    });
+
+    expect(response.status).toBe(503);
+    expect(repository.uploads[0]?.inspection.status).toBe("cancelled");
+  });
+
+  it("preserves a queued sample for maintenance redispatch", async () => {
+    const repository = new FakeInspectionRepository();
+    const storage = new FakeStorage();
+    storage.metadata.mockResolvedValue({
+      key: "samples/assembly-line-no-hard-hat.webm",
+      sizeBytes: 128_000,
+    });
+    const dispatcher = new FakeTaskDispatcher();
+    dispatcher.dispatch.mockRejectedValueOnce(
+      new Error("simulated dispatch failure"),
+    );
+
+    const response = await authenticated(
+      request(inspectionApp(repository, storage, dispatcher))
+        .post("/api/inspections")
+        .set("Origin", appOrigin.origin),
+    ).send({
+      title: "Prepared sample dispatch failure",
+      workflowKey: "factory-safety-v1",
+      source: {
+        sourceType: "sample",
+        sampleKey: "assembly-line-no-hard-hat",
+      },
+    });
+
+    expect(response.status).toBe(503);
+    expect(repository.uploads[0]?.inspection.status).toBe("queued");
+    expect(repository.requestOwnedCancellation).not.toHaveBeenCalled();
   });
 
   it.each([

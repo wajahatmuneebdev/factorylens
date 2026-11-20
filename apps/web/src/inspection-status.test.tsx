@@ -113,7 +113,11 @@ describe("inspection processing status", () => {
       await screen.findByRole("heading", { name: `${status} inspection` }),
     ).toBeInTheDocument();
     expect(screen.getByText(label)).toBeInTheDocument();
-    if (status === "queued" || status === "processing") {
+    if (
+      status === "awaiting_upload" ||
+      status === "queued" ||
+      status === "processing"
+    ) {
       expect(
         screen.getByRole("button", { name: "Cancel inspection" }),
       ).toBeEnabled();
@@ -228,6 +232,30 @@ describe("inspection processing status", () => {
         headers: { "Content-Type": "application/json" },
         method: "POST",
       },
+    );
+  });
+
+  it("cancels an awaiting-upload inspection immediately", async () => {
+    const awaitingUpload = inspection("awaiting_upload");
+    const cancelled = {
+      ...awaitingUpload,
+      completedAt: timestamp,
+      status: "cancelled" as const,
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(response(awaitingUpload))
+      .mockResolvedValueOnce(response(cancelled));
+    renderStatus();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel inspection" }),
+    );
+
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `/api/inspections/${inspectionId}/cancel`,
+      expect.objectContaining({ method: "POST" }),
     );
   });
 
