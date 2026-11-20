@@ -341,6 +341,7 @@ p {
   border-radius: 50%;
   font-size: var(--text-xs);
   font-weight: 750;
+  object-fit: cover;
 }
 
 .tablet-header,

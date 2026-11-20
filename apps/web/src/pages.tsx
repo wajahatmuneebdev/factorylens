@@ -1,11 +1,24 @@
+import type { User } from "@factorylens/contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  Link,
+  useNavigate,
+  useOutletContext,
+  useParams,
+} from "react-router-dom";
 
 import { PageState } from "./components/PageState";
 import { NewInspectionForm } from "./new-inspection";
 import { InspectionHistory, RecentInspections } from "./inspection-history";
 import { InspectionStatus } from "./inspection-status";
 import { Badge, Button, Dialog, Notification } from "./components/ui";
+import { currentUserQueryKey, UserAvatar } from "./current-user";
+
+export interface AppOutletContext {
+  currentUser: User | null;
+  currentUserPending: boolean;
+}
 
 function PageHeader({
   action,
@@ -96,6 +109,9 @@ export function HistoryPage() {
 }
 
 export function AccountPage() {
+  const { currentUser, currentUserPending } =
+    useOutletContext<AppOutletContext>();
+  const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -109,6 +125,7 @@ export function AccountPage() {
       if (!response.ok) {
         throw new Error("Sign-out failed");
       }
+      queryClient.removeQueries({ queryKey: currentUserQueryKey });
       navigate("/sign-in", { replace: true });
     } catch {
       setDialogOpen(false);
@@ -121,13 +138,14 @@ export function AccountPage() {
     <div className="page-stack page-stack--narrow">
       <PageHeader eyebrow="Settings" title="Account" />
       <section aria-labelledby="profile-title" className="panel profile-card">
-        <div aria-hidden="true" className="profile-card__avatar">
-          FM
-        </div>
+        <UserAvatar className="profile-card__avatar" user={currentUser} />
         <div>
-          <p className="eyebrow">Profile preview</p>
-          <h2 id="profile-title">Factory member</h2>
-          <p className="muted-copy">member@example.com</p>
+          <p className="eyebrow">Google profile</p>
+          <h2 id="profile-title">
+            {currentUser?.displayName ??
+              (currentUserPending ? "Loading profile…" : "Profile unavailable")}
+          </h2>
+          <p className="muted-copy">{currentUser?.email ?? ""}</p>
         </div>
         <Badge tone="positive">Active</Badge>
       </section>

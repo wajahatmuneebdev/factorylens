@@ -65,6 +65,28 @@ function response(inspections: Inspection[], nextCursor: string | null = null) {
   });
 }
 
+function currentUserResponse() {
+  return new Response(
+    JSON.stringify({
+      user: {
+        id: "11111111-1111-4111-8111-111111111111",
+        email: "member@example.com",
+        displayName: "Factory member",
+        avatarUrl: null,
+      },
+    }),
+    { headers: { "content-type": "application/json" }, status: 200 },
+  );
+}
+
+function mockApiResponses(...responses: Response[]) {
+  let nextResponse = 0;
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (input === "/api/me") return currentUserResponse();
+    return responses[nextResponse++] ?? responses.at(-1)!;
+  });
+}
+
 function renderRoute(path = "/history") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, retryDelay: 0 } },
@@ -85,11 +107,9 @@ afterEach(() => {
 
 describe("inspection dashboard and history", () => {
   it("shows a concise recent list and a clear start action", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        response([inspection(ids[0], "completed", "Recent inspection")]),
-      );
+    const fetchMock = mockApiResponses(
+      response([inspection(ids[0], "completed", "Recent inspection")]),
+    );
     renderRoute("/dashboard");
 
     expect(
@@ -104,7 +124,7 @@ describe("inspection dashboard and history", () => {
   });
 
   it("shows an intentional empty history state", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(response([]));
+    mockApiResponses(response([]));
     renderRoute();
 
     expect(
@@ -116,7 +136,7 @@ describe("inspection dashboard and history", () => {
   });
 
   it("renders mixed lifecycle states with source, progress, result, and stable created times", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    mockApiResponses(
       response([
         inspection(ids[0], "completed", "Packaging review"),
         inspection(ids[1], "processing", "Loading bay review"),
@@ -156,14 +176,13 @@ describe("inspection dashboard and history", () => {
 
   it("opens the selected inspection detail route", async () => {
     const selected = inspection(ids[0], "completed", "Packaging review");
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(response([selected]))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ inspection: selected }), {
-          headers: { "content-type": "application/json" },
-          status: 200,
-        }),
-      );
+    mockApiResponses(
+      response([selected]),
+      new Response(JSON.stringify({ inspection: selected }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
     renderRoute();
 
     fireEvent.click(
@@ -175,17 +194,13 @@ describe("inspection dashboard and history", () => {
   });
 
   it("loads the next page only when the API supplies a cursor", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        response(
-          [inspection(ids[0], "completed", "Newest inspection")],
-          "older-page",
-        ),
-      )
-      .mockResolvedValueOnce(
-        response([inspection(ids[1], "cancelled", "Older inspection")]),
-      );
+    const fetchMock = mockApiResponses(
+      response(
+        [inspection(ids[0], "completed", "Newest inspection")],
+        "older-page",
+      ),
+      response([inspection(ids[1], "cancelled", "Older inspection")]),
+    );
     renderRoute();
 
     fireEvent.click(
@@ -206,12 +221,13 @@ describe("inspection dashboard and history", () => {
   });
 
   it("offers retry after an API failure and redirects a signed-out request", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(response([]));
+    mockApiResponses(
+      new Response(null, { status: 503 }),
+      new Response(null, { status: 503 }),
+      new Response(null, { status: 503 }),
+      response([]),
+      new Response(null, { status: 401 }),
+    );
     const first = renderRoute();
 
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
@@ -220,7 +236,6 @@ describe("inspection dashboard and history", () => {
     ).toBeInTheDocument();
     first.unmount();
 
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
     renderRoute();
     await waitFor(() =>
       expect(

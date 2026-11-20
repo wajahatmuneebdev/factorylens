@@ -1,5 +1,9 @@
 import { type ReactNode, useEffect } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
 import {
   BrowserRouter,
   Link,
@@ -19,7 +23,14 @@ import {
   NewInspectionPage,
   NotFoundPage,
   SignInPage,
+  type AppOutletContext,
 } from "./pages";
+import {
+  CurrentUserRequestError,
+  currentUserQueryKey,
+  fetchCurrentUser,
+  UserAvatar,
+} from "./current-user";
 
 type IconName = "account" | "add" | "dashboard" | "history";
 
@@ -120,6 +131,26 @@ function RouteFocus() {
 }
 
 function AppShell() {
+  const currentUser = useQuery({
+    queryKey: currentUserQueryKey,
+    queryFn: fetchCurrentUser,
+    retry: (failureCount, error) =>
+      !(error instanceof CurrentUserRequestError && error.status === 401) &&
+      failureCount < 2,
+  });
+
+  if (
+    currentUser.error instanceof CurrentUserRequestError &&
+    currentUser.error.status === 401
+  ) {
+    return <Navigate replace to="/sign-in" />;
+  }
+
+  const outletContext: AppOutletContext = {
+    currentUser: currentUser.data ?? null,
+    currentUserPending: currentUser.isPending,
+  };
+
   return (
     <div className="app-shell">
       <RouteFocus />
@@ -140,12 +171,15 @@ function AppShell() {
             }
             to="/account"
           >
-            <span aria-hidden="true" className="avatar">
-              FM
-            </span>
+            <UserAvatar className="avatar" user={outletContext.currentUser} />
             <span className="account-link__identity">
-              <strong>Factory member</strong>
-              <span>Interface preview</span>
+              <strong>
+                {outletContext.currentUser?.displayName ??
+                  (outletContext.currentUserPending
+                    ? "Loading profile…"
+                    : "Profile unavailable")}
+              </strong>
+              <span>{outletContext.currentUser?.email ?? ""}</span>
             </span>
             <Icon name="account" />
           </NavLink>
@@ -159,9 +193,7 @@ function AppShell() {
           className="tablet-header__account"
           to="/account"
         >
-          <span aria-hidden="true" className="avatar">
-            FM
-          </span>
+          <UserAvatar className="avatar" user={outletContext.currentUser} />
         </NavLink>
       </header>
       <div className="tablet-nav">
@@ -169,7 +201,7 @@ function AppShell() {
       </div>
 
       <main className="app-main" id="main-content" tabIndex={-1}>
-        <Outlet />
+        <Outlet context={outletContext} />
       </main>
     </div>
   );

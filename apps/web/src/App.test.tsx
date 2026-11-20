@@ -10,18 +10,34 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AppRoutes } from "./App";
+import { currentUserQueryKey } from "./current-user";
+
+const currentUser = {
+  id: "11111111-1111-4111-8111-111111111111",
+  email: "wajahat@example.com",
+  displayName: "Wajahat Muneeb",
+  avatarUrl: null,
+};
+
+function currentUserResponse() {
+  return new Response(JSON.stringify({ user: currentUser }), {
+    headers: { "Content-Type": "application/json" },
+    status: 200,
+  });
+}
 
 function renderRoute(path: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <AppRoutes />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...rendered, queryClient };
 }
 
 beforeAll(() => {
@@ -96,6 +112,29 @@ describe("application shell", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the authenticated Google profile in the shell and account page", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(currentUserResponse());
+    renderRoute("/account");
+
+    expect(await screen.findAllByText(currentUser.displayName)).toHaveLength(2);
+    expect(screen.getAllByText(currentUser.email)).toHaveLength(2);
+    expect(screen.queryByText("Factory member")).not.toBeInTheDocument();
+    expect(screen.queryByText("member@example.com")).not.toBeInTheDocument();
+  });
+
+  it("returns an expired session to sign-in", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 401 }),
+    );
+    renderRoute("/dashboard");
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "See every moment that matters.",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("moves focus to main content after client-side navigation", async () => {
     renderRoute("/dashboard");
 
@@ -149,8 +188,12 @@ describe("application shell", () => {
   it("revokes the session before returning to sign-in", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 200 }));
-    renderRoute("/account");
+      .mockImplementation(async (input) =>
+        input === "/api/me"
+          ? currentUserResponse()
+          : new Response(null, { status: 200 }),
+      );
+    const { queryClient } = renderRoute("/account");
 
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     fireEvent.click(
@@ -165,5 +208,6 @@ describe("application shell", () => {
         screen.getByRole("heading", { name: "See every moment that matters." }),
       ).toBeInTheDocument();
     });
+    expect(queryClient.getQueryData(currentUserQueryKey)).toBeUndefined();
   });
 });
