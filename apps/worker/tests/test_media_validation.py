@@ -43,6 +43,18 @@ def valid_probe() -> dict[str, object]:
     return json.loads(FIXTURE_PATH.read_text())  # type: ignore[no-any-return]
 
 
+def probe_without_duration() -> dict[str, object]:
+    probe = valid_probe()
+    format_metadata = probe["format"]
+    streams = probe["streams"]
+    assert isinstance(format_metadata, dict)
+    assert isinstance(streams, list)
+    assert isinstance(streams[0], dict)
+    format_metadata["duration"] = "N/A"
+    streams[0]["duration"] = "N/A"
+    return probe
+
+
 class FixtureProbeRunner:
     def __init__(
         self, payload: dict[str, object] | list[dict[str, object]] | None = None
@@ -299,6 +311,59 @@ def test_ffprobe_uses_an_argument_array_without_a_shell() -> None:
     assert "shell" not in run.call_args.kwargs
     assert run.call_args.kwargs["timeout"] == 4.0
     assert result == valid_probe()
+
+
+def test_ffprobe_derives_missing_duration_from_packet_timeline() -> None:
+    missing_duration = probe_without_duration()
+    metadata_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=json.dumps(missing_duration), stderr=""
+    )
+    packets_result = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=(
+            "pts_time=0.000000|duration_time=0.040000\n"
+            "pts_time=0.100000|duration_time=0.010000\n"
+            "pts_time=2.250000|duration_time=0.050000\n"
+        ),
+        stderr="",
+    )
+    with patch(
+        "factorylens_worker.media_validation.subprocess.run",
+        side_effect=[metadata_result, packets_result],
+    ) as run:
+        probe = FfprobeRunner("/usr/bin/ffprobe").probe(Path("recording.webm"), 4.0)
+
+    metadata = parse_and_validate_probe(probe, size_bytes=100, limits=MediaLimits())
+    assert metadata.duration_ms == 2300
+    assert run.call_count == 2
+    packet_arguments = run.call_args_list[1].args[0]
+    assert "-show_packets" in packet_arguments
+    assert "packet=pts_time,duration_time" in packet_arguments
+    assert packet_arguments[-1] == "recording.webm"
+
+
+def test_ffprobe_keeps_missing_duration_invalid_without_a_packet_timeline() -> None:
+    metadata_result = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(probe_without_duration()),
+        stderr="",
+    )
+    packets_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="pts_time=N/A|duration_time=N/A\n", stderr=""
+    )
+    with patch(
+        "factorylens_worker.media_validation.subprocess.run",
+        side_effect=[metadata_result, packets_result],
+    ):
+        probe = FfprobeRunner().probe(Path("invalid.webm"), 4.0)
+
+    with pytest.raises(MediaValidationError) as failure:
+        parse_and_validate_probe(probe, size_bytes=100, limits=MediaLimits())
+
+    assert failure.value.code == "invalid_media"
+    assert failure.value.safe_message == "Media duration is missing or invalid."
 
 
 def test_ffmpeg_uses_bounded_arguments_resources_and_captured_diagnostics() -> None:

@@ -180,6 +180,69 @@ class FfprobeRunner:
             "json",
             str(source_path),
         ]
+        payload = self._json_probe(arguments, timeout_seconds)
+        if _probe_duration_is_missing(payload):
+            duration = self._packet_timeline_duration(source_path, timeout_seconds)
+            format_value = payload.get("format")
+            if duration is not None and isinstance(format_value, dict):
+                format_value["duration"] = str(duration)
+        return payload
+
+    def _json_probe(
+        self, arguments: list[str], timeout_seconds: float
+    ) -> dict[str, object]:
+        output = self._run(arguments, timeout_seconds)
+        try:
+            payload = json.loads(output)
+        except (json.JSONDecodeError, TypeError) as error:
+            raise MediaValidationError(
+                "invalid_media", "Media inspection returned invalid metadata."
+            ) from error
+        if not isinstance(payload, dict):
+            raise MediaValidationError(
+                "invalid_media", "Media inspection returned invalid metadata."
+            )
+        return cast(dict[str, object], payload)
+
+    def _packet_timeline_duration(
+        self, source_path: Path, timeout_seconds: float
+    ) -> Decimal | None:
+        output = self._run(
+            [
+                self._executable,
+                "-v",
+                "error",
+                "-show_packets",
+                "-show_entries",
+                "packet=pts_time,duration_time",
+                "-of",
+                "compact=p=0:nk=0",
+                str(source_path),
+            ],
+            timeout_seconds,
+        )
+        earliest_start: Decimal | None = None
+        latest_end: Decimal | None = None
+        for line in output.splitlines():
+            fields = dict(
+                field.split("=", 1) for field in line.split("|") if "=" in field
+            )
+            start = _packet_decimal(fields.get("pts_time"))
+            if start is None:
+                continue
+            packet_duration = _packet_decimal(fields.get("duration_time"))
+            if packet_duration is None or packet_duration < 0:
+                packet_duration = Decimal(0)
+            end = start + packet_duration
+            earliest_start = (
+                start if earliest_start is None else min(earliest_start, start)
+            )
+            latest_end = end if latest_end is None else max(latest_end, end)
+        if earliest_start is None or latest_end is None or latest_end <= earliest_start:
+            return None
+        return latest_end - earliest_start
+
+    def _run(self, arguments: list[str], timeout_seconds: float) -> str:
         try:
             result = subprocess.run(
                 arguments,
@@ -197,18 +260,7 @@ class FfprobeRunner:
             raise MediaValidationError(
                 "invalid_media", "The uploaded file is not valid readable media."
             )
-
-        try:
-            payload = json.loads(result.stdout)
-        except (json.JSONDecodeError, TypeError) as error:
-            raise MediaValidationError(
-                "invalid_media", "Media inspection returned invalid metadata."
-            ) from error
-        if not isinstance(payload, dict):
-            raise MediaValidationError(
-                "invalid_media", "Media inspection returned invalid metadata."
-            )
-        return cast(dict[str, object], payload)
+        return result.stdout
 
 
 class FfmpegRunner:
@@ -598,6 +650,36 @@ def _parse_stream(value: object) -> MediaStreamMetadata:
         codec=codec,
         duration_ms=stream_duration,
     )
+
+
+def _probe_duration_is_missing(probe: Mapping[str, object]) -> bool:
+    format_value = probe.get("format")
+    streams_value = probe.get("streams")
+    if not isinstance(format_value, Mapping) or not isinstance(streams_value, Sequence):
+        return False
+    if not _duration_value_is_missing(format_value.get("duration")):
+        return False
+    for stream_value in streams_value:
+        if (
+            isinstance(stream_value, Mapping)
+            and stream_value.get("codec_type") == "video"
+        ):
+            return _duration_value_is_missing(stream_value.get("duration"))
+    return False
+
+
+def _duration_value_is_missing(value: object) -> bool:
+    return value is None or value == "N/A"
+
+
+def _packet_decimal(value: str | None) -> Decimal | None:
+    if value is None or value == "N/A" or len(value) > 64:
+        return None
+    try:
+        parsed = Decimal(value)
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
 
 
 def _required_duration_ms(primary: object, fallback: int | None) -> int:
