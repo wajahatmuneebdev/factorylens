@@ -78,6 +78,19 @@ The synthetic Workflow itself consumed only 69.0 ms at the boundary. That
 number deliberately excludes Roboflow latency and quota behavior and therefore
 cannot be used to approve the 30-minute task deadline.
 
+## Production smoke observation
+
+On 2026-11-22 UTC, one signed-in browser recording completed through the
+deployed R2, Cloud Tasks, Cloud Run worker, Neon, and pinned Roboflow Workflow
+path on its first attempt. The source was 2,154,535 bytes, 8.09 seconds, and
+640×480. Cloud Logging recorded the worker request from 05:14:34 through
+05:15:04 UTC with no retry.
+
+This confirms that the integrated happy path works for one small recording. It
+does not satisfy the capacity gate: the five-case matrix, three-inspection
+burst, peak Cloud Run and Neon measurements, Roboflow quota evidence, boundary
+artifact browser measurements, and deadline headroom are still unmeasured.
+
 ## Configured safety ceiling
 
 Terraform now supplies the application values from validated variables, so

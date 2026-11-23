@@ -210,7 +210,11 @@ export function SignInPage() {
         </a>
         <p className="sign-in__note">
           Google verifies your identity. FactoryLens manages your application
-          session.
+          session. Signed-in users can upload recorded video for analysis by the
+          configured Roboflow cloud Workflow. Videos and results are private to
+          the signed-in account and retained for up to 30 days; incomplete
+          uploads expire after 24 hours. The prepared sample uses deterministic
+          results without live inference credits.
         </p>
       </section>
       <aside aria-label="Product preview" className="sign-in__visual">

@@ -110,6 +110,7 @@ class FakeWorkflowRunner:
     def __init__(self, failure: Exception | None = None) -> None:
         self.failure = failure
         self.calls = 0
+        self.configurations: list[WorkflowConfiguration] = []
 
     def run_frame(
         self,
@@ -118,8 +119,9 @@ class FakeWorkflowRunner:
         *,
         is_cancelled: Callable[[], bool] = lambda: False,
     ) -> PredictionFrame:
-        del configuration, is_cancelled
+        del is_cancelled
         self.calls += 1
+        self.configurations.append(configuration)
         if self.failure is not None:
             raise self.failure
         return PredictionFrame(timestampMs=frame.timestamp_ms, predictions=[])
@@ -133,12 +135,18 @@ class FakeArtifactStage:
         self.values = values
 
 
-def lease() -> JobLease:
+def lease(
+    *,
+    source_type: str = "upload",
+    source_object_key: str = "inspections/upload/source",
+) -> JobLease:
     from datetime import UTC, datetime, timedelta
 
     return JobLease(
         job_id=uuid4(),
         inspection_id=uuid4(),
+        source_type=source_type,
+        source_object_key=source_object_key,
         dispatch_generation=2,
         attempt_count=1,
         max_attempts=3,
@@ -152,15 +160,24 @@ def pipeline(
     sampler: FakeFrameSampler,
     runner: FakeWorkflowRunner,
     artifact: FakeArtifactStage,
+    *,
+    sample_runner: FakeWorkflowRunner | None = None,
 ) -> InspectionProcessingPipeline:
+    sample_configuration = WorkflowConfiguration(
+        endpoint="fixture://assembly-line-no-hard-hat"
+    )
     return InspectionProcessingPipeline(
         storage=storage,
         media_stage=FakeMediaStage(),  # type: ignore[arg-type]
         frame_sampler=sampler,
         workflow_runner=runner,
         workflow_configuration=WorkflowConfiguration(
-            endpoint="fixture://assembly-line-no-hard-hat"
+            endpoint="https://serverless.roboflow.com",
+            workspace="factorylens-test",
+            provider_version_id="1",
         ),
+        sample_workflow_runner=sample_runner or FakeWorkflowRunner(),
+        sample_workflow_configuration=sample_configuration,
         artifact_stage=artifact,  # type: ignore[arg-type]
     )
 
@@ -193,6 +210,41 @@ def test_pipeline_runs_documented_stages_and_commits_the_artifact() -> None:
     assert runner.calls == 1
     assert artifact.values is not None
     assert artifact.values["frames"] == [PredictionFrame(timestampMs=0, predictions=[])]
+
+
+def test_prepared_sample_uses_shared_source_and_fixture_workflow() -> None:
+    storage = FakeStorage()
+    sampler = FakeFrameSampler()
+    production_runner = FakeWorkflowRunner()
+    sample_runner = FakeWorkflowRunner()
+    artifact = FakeArtifactStage()
+    current_lease = lease(
+        source_type="sample",
+        source_object_key="samples/assembly-line-no-hard-hat.webm",
+    )
+
+    pipeline(
+        storage,
+        sampler,
+        production_runner,
+        artifact,
+        sample_runner=sample_runner,
+    ).run(
+        current_lease,
+        report_progress=lambda _stage, _percent: None,
+        is_cancelled=lambda: False,
+    )
+
+    assert sampler.object_keys == ["samples/assembly-line-no-hard-hat.webm"]
+    assert production_runner.calls == 0
+    assert sample_runner.calls == 1
+    assert sample_runner.configurations[0].endpoint == (
+        "fixture://assembly-line-no-hard-hat"
+    )
+    assert artifact.values is not None
+    workflow = artifact.values["workflow"]
+    assert isinstance(workflow, WorkflowConfiguration)
+    assert workflow.endpoint == "fixture://assembly-line-no-hard-hat"
 
 
 def test_retryable_provider_failure_is_sanitized_and_classified() -> None:

@@ -92,6 +92,12 @@ describe("application shell", () => {
     expect(
       screen.getByRole("link", { name: "Continue with Google" }),
     ).toHaveAttribute("href", "/auth/google?returnTo=/dashboard");
+    expect(
+      screen.getByText(/videos and results are private/i),
+    ).toHaveTextContent(/retained for up to 30 days/i);
+    expect(
+      screen.getByText(/videos and results are private/i),
+    ).toHaveTextContent(/prepared sample uses deterministic results/i);
   });
 
   it("provides landmarks, keyboard entry, current navigation, and a loading state", () => {
