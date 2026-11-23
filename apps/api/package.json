@@ -10,6 +10,7 @@
     "configure:tasks": "tsx src/configure-cloud-tasks.ts",
     "db:migrate": "tsx src/migrate-database.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "seed:sample": "tsx src/seed-prepared-sample.ts",
     "smoke:r2": "tsx src/smoke-r2.ts",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",

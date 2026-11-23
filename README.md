@@ -85,7 +85,9 @@ supported pass-through and normalization paths, boundary memory, prediction
 artifacts, and browser loading. Its local measurements and the required
 deployed capacity gate are documented in
 [PROCESSING_ENVELOPE.md](./PROCESSING_ENVELOPE.md); real-user uploads remain
-gated on that deployed run.
+subject to the conservative limits above while that deployed capacity run
+remains open. The current public deployment is an evaluation release, not a
+claim of million-user or production-scale capacity.
 Pull requests and the main branch now run the complete application, migration,
 contract, browser, and infrastructure validation suite in GitHub Actions. A
 successful main-branch validation can enter the protected production
@@ -136,10 +138,13 @@ restrict browser access to the configured application origin and install the
 safe bucket lifecycle rule; this one-time command uses the separate
 configuration credentials documented in `DATA_SERVICES.md`. The test database
 variable described below is required only for its opt-in integration test. Set
-`TASK_DISPATCHER=cloud-tasks` in production and run
-`npm run configure:tasks --workspace @factorylens/api` with deployment
-credentials to apply the configured rate, concurrency, and retry limits to an
-already-provisioned queue.
+`TASK_DISPATCHER=cloud-tasks` in production. Terraform owns the production
+queue limits; use `npm run configure:tasks --workspace @factorylens/api` only
+for an already-provisioned non-Terraform queue.
+Run `npm run seed:sample --workspace @factorylens/api` once per production
+bucket to create the private prepared-sample object. Prepared-sample jobs use
+deterministic fixture inference; uploaded and recorded videos use the configured
+Roboflow Workflow.
 For local task delivery, set the same `LOCAL_WORKER_TASK_TOKEN` in the API and
 worker environments; local authentication is restricted to the worker's
 loopback bind address.

@@ -69,12 +69,12 @@ done
 Attach the production notification channel to the created policies before
 relying on paging. The checked-in thresholds require repeated symptoms:
 
-| Symptom | Opens an incident when |
-| --- | --- |
-| API or worker errors | More than five 5xx responses occur in five minutes |
-| Task retries | At least two retried deliveries occur in ten minutes |
-| Oldest queued job | Age stays above ten minutes for ten minutes |
-| Stale leases | More than one stays stale for ten minutes |
+| Symptom              | Opens an incident when                               |
+| -------------------- | ---------------------------------------------------- |
+| API or worker errors | More than five 5xx responses occur in five minutes   |
+| Task retries         | At least two retried deliveries occur in ten minutes |
+| Oldest queued job    | Age stays above ten minutes for ten minutes          |
+| Stale leases         | More than one stays stale for ten minutes            |
 
 Thus one expected task retry or one lease recovered by maintenance does not
 page. Review thresholds after production workload measurements; do not weaken
@@ -118,3 +118,112 @@ In Cloud Logging, use the same filter without downloading logs:
 ```text
 jsonPayload.correlationId="JOB_UUID"
 ```
+
+## Recover the processing queue
+
+Cloud Tasks may redeliver a task, and the worker lease makes that safe. Do not
+manually mark database rows completed or create replacement tasks by hand.
+
+1. If repeated deliveries are causing damage, pause dispatch while leaving the
+   durable queue intact:
+
+   ```sh
+   gcloud tasks queues pause factorylens-processing \
+     --location us-east4 --project factorylens-production
+   ```
+
+2. Trace one correlation ID and fix the worker, credentials, provider, or
+   storage problem. A normal retry remains bounded by the durable three-attempt
+   limit.
+3. Deploy the reviewed fix, then run maintenance once. Maintenance redispatches
+   committed jobs whose task was never enqueued and recovers expired leases:
+
+   ```sh
+   gcloud scheduler jobs run factorylens-maintenance \
+     --location us-east4 --project factorylens-production
+   ```
+
+4. Confirm `operational_snapshot` reports no unexpected stale lease, resume the
+   queue, and watch its oldest-task age and retry count:
+
+   ```sh
+   gcloud tasks queues resume factorylens-processing \
+     --location us-east4 --project factorylens-production
+   ```
+
+Terminal media failures require a user retry after the input is corrected.
+Provider and storage failures enter the existing bounded retry path; operators
+must not raise attempts to conceal a persistent failure.
+
+## Roll back a Cloud Run release
+
+Database migrations are forward-only in the deployment workflow. Before
+routing traffic to an older revision, confirm that its code remains compatible
+with the current schema. A schema rollback requires a separate reviewed change.
+
+1. List Ready revisions and identify the last known-good web and worker pair:
+
+   ```sh
+   gcloud run revisions list --service factorylens-web \
+     --region us-east4 --project factorylens-production
+   gcloud run revisions list --service factorylens-worker \
+     --region us-east4 --project factorylens-production
+   ```
+
+2. Route each service to its matching known-good revision:
+
+   ```sh
+   gcloud run services update-traffic factorylens-worker \
+     --region us-east4 --project factorylens-production \
+     --to-revisions WORKER_REVISION=100
+   gcloud run services update-traffic factorylens-web \
+     --region us-east4 --project factorylens-production \
+     --to-revisions WEB_REVISION=100
+   ```
+
+3. Verify public web health, private worker ingress, Google sign-in, one
+   prepared-sample inspection, and one owner-scoped result read. Keep or pause
+   the processing queue according to the worker result.
+4. Revert the faulty change in Git, run the normal validation workflow, and
+   deploy that new immutable revision. Do not leave production on an unnamed
+   manual state.
+
+## Verify a public release
+
+From a fresh clone, activate Node 24 and run:
+
+```sh
+npm ci
+uv sync --project apps/worker --locked
+npx playwright install chromium
+npm run check
+npm run test:e2e
+npm run test:containers
+```
+
+Before calling a deployment ready, record the commit and image digests and
+complete this production smoke checklist:
+
+- The protected deployment workflow, migration, image scans, candidate checks,
+  and promotion all succeeded for the same commit.
+- Public `/health` succeeds; an unauthenticated private API call returns `401`;
+  the worker task endpoint is not publicly invokable.
+- Google sign-in and sign-out succeed at the canonical origin, and the displayed
+  account name and email come from the authenticated user.
+- The prepared sample completes with fixture Workflow provenance and consumes no
+  live Roboflow request. An uploaded or recorded video completes with the pinned
+  Roboflow Workflow provenance.
+- Playback, annotations, filters, timeline, JSON export, and CSV export work for
+  the inspection owner; a different account cannot access that inspection.
+- Cancellation, eligible user retry, maintenance, queue recovery, and the
+  30-day terminal-retention policy behave as documented.
+- No credential, signed URL, session token, private media, prediction payload,
+  or unsupported scale claim appears in the repository, logs, or release notes.
+
+The public deployment accepts arbitrary valid media only after Google sign-in
+and within the documented limits. Source videos and results are private to the
+account and retained for up to 30 days; abandoned uploads expire after 24
+hours. The prepared sample is redistributable under its recorded CC BY 4.0
+attribution. Until the deployed capacity gate in `PROCESSING_ENVELOPE.md`
+passes, describe FactoryLens as an evaluation release rather than a
+production-scale service.

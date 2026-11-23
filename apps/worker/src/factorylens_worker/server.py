@@ -44,6 +44,8 @@ from factorylens_worker.task_execution import (
     TaskExecutor,
 )
 from factorylens_worker.workflow import (
+    FIXTURE_WORKFLOW_ENDPOINT,
+    WorkflowConfiguration,
     create_workflow_runner,
     workflow_configuration_from_environment,
 )
@@ -384,6 +386,9 @@ def main() -> None:
         os.environ, local_authentication=auth_mode == "local"
     )
     workflow_configuration = workflow_configuration_from_environment()
+    sample_workflow_configuration = WorkflowConfiguration(
+        endpoint=FIXTURE_WORKFLOW_ENDPOINT
+    )
     media_limits = MediaLimits(
         max_size_bytes=positive_environment_integer(
             "MAX_UPLOAD_BYTES", 250 * 1024 * 1024
@@ -405,6 +410,8 @@ def main() -> None:
         frame_sampler=FfmpegFrameSampler(),
         workflow_runner=create_workflow_runner(workflow_configuration),
         workflow_configuration=workflow_configuration,
+        sample_workflow_runner=create_workflow_runner(sample_workflow_configuration),
+        sample_workflow_configuration=sample_workflow_configuration,
         artifact_stage=PredictionArtifactStage(
             storage,
             PostgresInspectionCompletionStore(database_url),

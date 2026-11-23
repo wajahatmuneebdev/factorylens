@@ -191,6 +191,7 @@ def test_valid_fixture_is_downloaded_probed_and_recorded(tmp_path: Path) -> None
     metadata = stage.run(
         job_id=job_id,
         inspection_id=INSPECTION_ID,
+        source_key=source_object_key(INSPECTION_ID),
         dispatch_generation=2,
         lease_token=lease_token,
     )
@@ -271,6 +272,7 @@ def test_incompatible_media_is_normalized_reprobed_and_stored_by_generation(
     metadata = stage.run(
         job_id=job_id,
         inspection_id=INSPECTION_ID,
+        source_key=source_object_key(INSPECTION_ID),
         dispatch_generation=3,
         lease_token=lease_token,
     )
@@ -608,6 +610,7 @@ def test_actual_download_size_is_bounded_when_storage_metadata_is_wrong(
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=1,
             lease_token=uuid4(),
         )
@@ -628,6 +631,7 @@ def test_cancellation_after_download_skips_probe_and_cleans_temporary_file(
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=1,
             lease_token=uuid4(),
             is_cancelled=lambda: next(cancellation_checks),
@@ -650,6 +654,7 @@ def test_probe_failure_cleans_temporary_file(tmp_path: Path) -> None:
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=1,
             lease_token=uuid4(),
         )
@@ -667,6 +672,7 @@ def test_stale_lease_rejects_metadata_after_temporary_cleanup(tmp_path: Path) ->
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=1,
             lease_token=uuid4(),
         )
@@ -695,6 +701,7 @@ def test_normalization_failure_removes_partial_temporary_output(
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=4,
             lease_token=uuid4(),
         )
@@ -723,6 +730,7 @@ def test_cancellation_after_upload_removes_normalized_storage_object(
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=5,
             lease_token=uuid4(),
             is_cancelled=lambda: next(cancellation_checks),
@@ -751,6 +759,7 @@ def test_rejected_lease_removes_uploaded_normalized_object(tmp_path: Path) -> No
         stage.run(
             job_id=uuid4(),
             inspection_id=INSPECTION_ID,
+            source_key=source_object_key(INSPECTION_ID),
             dispatch_generation=6,
             lease_token=uuid4(),
         )

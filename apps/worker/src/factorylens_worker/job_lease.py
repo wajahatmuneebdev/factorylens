@@ -41,6 +41,8 @@ class FailureOutcome(StrEnum):
 class JobLease:
     job_id: UUID
     inspection_id: UUID
+    source_type: str
+    source_object_key: str
     dispatch_generation: int
     attempt_count: int
     max_attempts: int
@@ -81,7 +83,9 @@ select
     job.available_at,
     job.lease_expires_at,
     job.cancel_requested_at,
-    inspection.status::text
+    inspection.status::text,
+    inspection.source_type::text,
+    inspection.source_object_key
 from jobs as job
 join inspections as inspection on inspection.id = job.inspection_id
 where job.id = %s
@@ -272,6 +276,8 @@ class PostgresJobLeaseStore:
                 lease_expires_at = row[7]
                 cancel_requested_at = row[8]
                 inspection_status = str(row[9])
+                source_type = str(row[10])
+                source_object_key = str(row[11])
 
                 if (
                     job_status in _TERMINAL_JOB_STATUSES
@@ -326,6 +332,8 @@ class PostgresJobLeaseStore:
                     JobLease(
                         job_id=job_id,
                         inspection_id=inspection_id,
+                        source_type=source_type,
+                        source_object_key=source_object_key,
                         dispatch_generation=dispatch_generation,
                         attempt_count=int(acquired[0]),
                         max_attempts=int(acquired[1]),

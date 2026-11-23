@@ -17,7 +17,6 @@ from uuid import UUID
 from factorylens_worker.storage import (
     ObjectStorage,
     processing_object_keys,
-    source_object_key,
 )
 
 DEFAULT_MAX_SIZE_BYTES = 250 * 1024 * 1024
@@ -398,6 +397,7 @@ class MediaValidationStage:
         *,
         job_id: UUID,
         inspection_id: UUID,
+        source_key: str,
         dispatch_generation: int,
         lease_token: UUID,
         is_cancelled: Callable[[], bool] = lambda: False,
@@ -405,7 +405,6 @@ class MediaValidationStage:
         if is_cancelled():
             raise MediaValidationCancelled()
 
-        source_key = source_object_key(inspection_id)
         object_metadata = self._storage.metadata(source_key)
         self._enforce_size(object_metadata.size_bytes)
 

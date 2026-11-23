@@ -99,11 +99,27 @@ maintenance transaction owns the approved terminal-retention policy.
    `finally` block, and confirms removal. It logs no credential, signed URL, or
    object key.
 
+6. With the same bucket-scoped runtime credentials and local curl,
+   FFmpeg/ffprobe, seed the shared prepared sample:
+
+   ```sh
+   npm run seed:sample --workspace @factorylens/api
+   ```
+
+   The command downloads the reviewed Wikimedia Commons source, verifies its
+   published SHA-1, creates the two-second 1840×1080 VP9 derivative required by
+   the inspection contract, validates its ten frames, and uploads it to the
+   private sample key. The source is credited to Automotive garage under
+   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); its canonical
+   record is [Assembly line.webm on Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Assembly_line.webm).
+   Re-running the command safely replaces only that shared sample object.
+
 ## Deployment record
 
 Record the Neon project and branch IDs, R2 bucket name, service maximums, and
-the date and operator for the migration, R2 configuration, and smoke commands
-in the private deployment change record. Record secret resource names, not
-secret values. Re-run the R2 configuration and smoke commands after creating a
-new production environment or changing its application origin. Reviewed
-database migrations continue to run through the protected deployment workflow.
+the date and operator for the migration, R2 configuration, smoke, and sample
+seed commands in the private deployment change record. Record secret resource
+names, not secret values. Re-run the R2 configuration and smoke commands after
+creating a new production environment or changing its application origin.
+Reviewed database migrations continue to run through the protected deployment
+workflow.

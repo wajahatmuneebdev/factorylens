@@ -125,6 +125,9 @@ def test_progress_requires_the_current_lease_token(queued_job: UUID) -> None:
     store = PostgresJobLeaseStore(database_url)
     decision = store.acquire(task_message(queued_job))
     assert decision.lease is not None
+    assert decision.lease.source_type == "upload"
+    assert decision.lease.source_object_key.startswith("inspections/")
+    assert decision.lease.source_object_key.endswith("/source")
 
     assert not store.record_progress(queued_job, uuid4(), "download", 10)
     assert store.record_progress(queued_job, decision.lease.token, "download", 10)

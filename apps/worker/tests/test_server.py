@@ -39,6 +39,8 @@ class FakeLeaseStore:
             lease = JobLease(
                 job_id=message.jobId,
                 inspection_id=uuid4(),
+                source_type="upload",
+                source_object_key="inspections/test/source",
                 dispatch_generation=message.dispatchGeneration,
                 attempt_count=1,
                 max_attempts=3,

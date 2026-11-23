@@ -27,7 +27,6 @@ from factorylens_worker.storage import (
     ObjectStorage,
     StorageObjectNotFoundError,
     processing_object_keys,
-    source_object_key,
 )
 from factorylens_worker.task_execution import (
     CancellationCheck,
@@ -187,6 +186,8 @@ class InspectionProcessingPipeline:
         frame_sampler: FrameSampler,
         workflow_runner: WorkflowRunner,
         workflow_configuration: WorkflowConfiguration,
+        sample_workflow_runner: WorkflowRunner,
+        sample_workflow_configuration: WorkflowConfiguration,
         artifact_stage: PredictionArtifactStage,
     ) -> None:
         self._storage = storage
@@ -194,6 +195,8 @@ class InspectionProcessingPipeline:
         self._frame_sampler = frame_sampler
         self._workflow_runner = workflow_runner
         self._workflow_configuration = workflow_configuration
+        self._sample_workflow_runner = sample_workflow_runner
+        self._sample_workflow_configuration = sample_workflow_configuration
         self._artifact_stage = artifact_stage
 
     def run(
@@ -208,6 +211,7 @@ class InspectionProcessingPipeline:
             media = self._media_stage.run(
                 job_id=lease.job_id,
                 inspection_id=lease.inspection_id,
+                source_key=lease.source_object_key,
                 dispatch_generation=lease.dispatch_generation,
                 lease_token=lease.token,
                 is_cancelled=is_cancelled,
@@ -220,8 +224,14 @@ class InspectionProcessingPipeline:
             media_key = (
                 normalized_key
                 if self._storage.exists(normalized_key)
-                else source_object_key(lease.inspection_id)
+                else lease.source_object_key
             )
+            if lease.source_type == "sample":
+                workflow_runner = self._sample_workflow_runner
+                workflow_configuration = self._sample_workflow_configuration
+            else:
+                workflow_runner = self._workflow_runner
+                workflow_configuration = self._workflow_configuration
             frames = []
             expected_frames = max(
                 1, math.ceil(media.duration_ms * SAMPLE_RATE_FPS / 1000)
@@ -239,9 +249,9 @@ class InspectionProcessingPipeline:
                             "Inspection processing was cancelled"
                         )
                     frames.append(
-                        self._workflow_runner.run_frame(
+                        workflow_runner.run_frame(
                             frame,
-                            self._workflow_configuration,
+                            workflow_configuration,
                             is_cancelled=is_cancelled,
                         )
                     )
@@ -265,7 +275,7 @@ class InspectionProcessingPipeline:
                 dispatch_generation=lease.dispatch_generation,
                 lease_token=lease.token,
                 media=media,
-                workflow=self._workflow_configuration,
+                workflow=workflow_configuration,
                 frames=frames,
             )
         except (MediaValidationCancelled, WorkflowCancelledError) as error:
