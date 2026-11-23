@@ -35,6 +35,11 @@ variable "github_deployment_branch" {
   }
 }
 
+variable "github_workload_identity_provider_id" {
+  description = "Local identifier for the GitHub workload identity provider."
+  type        = string
+}
+
 variable "billing_account_id" {
   description = "Billing account ID used for the project-scoped budget."
   type        = string

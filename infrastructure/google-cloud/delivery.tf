@@ -17,7 +17,7 @@ resource "google_iam_workload_identity_pool" "github" {
 resource "google_iam_workload_identity_pool_provider" "github" {
   project                            = var.project_id
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
-  workload_identity_pool_provider_id = "factorylens-production"
+  workload_identity_pool_provider_id = var.github_workload_identity_provider_id
   display_name                       = "FactoryLens production workflow"
 
   attribute_mapping = {

@@ -122,7 +122,8 @@ jobs:
             --image "$WORKER_IMAGE" \
             --no-traffic \
             --tag "$candidate_tag" \
-            --quiet
+            --quiet \
+            --no-user-output-enabled
           worker_revision=$(gcloud run services describe factorylens-worker \
             --project "$PROJECT_ID" \
             --region "$REGION" \
@@ -134,7 +135,8 @@ jobs:
             --image "$WEB_IMAGE" \
             --no-traffic \
             --tag "$candidate_tag" \
-            --quiet
+            --quiet \
+            --no-user-output-enabled
           web_revision=$(gcloud run services describe factorylens-web \
             --project "$PROJECT_ID" \
             --region "$REGION" \
@@ -162,7 +164,7 @@ jobs:
           test -n "$worker_candidate_url"
 
           attempt=0
-          until curl --fail --silent --show-error "$web_candidate_url/health" |
+          until curl --fail --silent "$web_candidate_url/health" |
             jq -e '.status == "ok"' >/dev/null; do
             attempt=$((attempt + 1))
             if [ "$attempt" -ge 12 ]; then
@@ -197,31 +199,35 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --to-revisions "$WORKER_REVISION=100" \
-            --quiet
+            --quiet \
+            --no-user-output-enabled
           gcloud run services update-traffic factorylens-web \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --to-revisions "$WEB_REVISION=100" \
-            --quiet
+            --quiet \
+            --no-user-output-enabled
 
           web_url=$(gcloud run services describe factorylens-web \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --format='value(status.url)')
           curl --fail --retry 6 --retry-all-errors --retry-delay 5 \
-            --silent --show-error "$web_url/health" |
+            --silent "$web_url/health" |
             jq -e '.status == "ok"' >/dev/null
 
           gcloud run services update-traffic factorylens-worker \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --remove-tags "$CANDIDATE_TAG" \
-            --quiet
+            --quiet \
+            --no-user-output-enabled
           gcloud run services update-traffic factorylens-web \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --remove-tags "$CANDIDATE_TAG" \
-            --quiet
+            --quiet \
+            --no-user-output-enabled
 
       - name: Summarize production deployment
         if: always()

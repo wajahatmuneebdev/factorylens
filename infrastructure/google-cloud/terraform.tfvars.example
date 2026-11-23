@@ -1,24 +1,25 @@
-project_id         = "factorylens-production"
-region             = "us-east4"
+project_id         = "YOUR_GCP_PROJECT_ID"
+region             = "YOUR_GCP_REGION"
 billing_account_id = "000000-000000-000000"
 
-github_repository        = "wajahatmuneebdev/factorylens"
+github_repository        = "OWNER/REPOSITORY"
 github_deployment_branch = "main"
+github_workload_identity_provider_id = "YOUR_WORKLOAD_IDENTITY_PROVIDER_ID"
 
 # Use an immutable tag or digest produced by the image build.
-web_image    = "us-east4-docker.pkg.dev/factorylens-production/factorylens/web@sha256:REPLACE"
-worker_image = "us-east4-docker.pkg.dev/factorylens-production/factorylens/worker@sha256:REPLACE"
+web_image    = "YOUR_GCP_REGION-docker.pkg.dev/YOUR_GCP_PROJECT_ID/factorylens/web@sha256:REPLACE"
+worker_image = "YOUR_GCP_REGION-docker.pkg.dev/YOUR_GCP_PROJECT_ID/factorylens/worker@sha256:REPLACE"
 
-application_origin    = "https://factorylens-web-874221858225.us-east4.run.app"
+application_origin    = "https://your-app.example"
 google_oidc_client_id = "REPLACE.apps.googleusercontent.com"
 
 r2_account_id = "00000000000000000000000000000000"
-r2_bucket     = "factorylens-private"
+r2_bucket     = "YOUR_PRIVATE_BUCKET"
 
 workflow_endpoint    = "https://serverless.roboflow.com"
-workflow_workspace   = "factorylens-uzfw1"
-workflow_version_id  = "1794990512449"
-workflow_fingerprint = "sha256:f18ade6ea1b86bf6e3b245a2329b57d67bbcc2491facd78d55f669c9170ba0a1"
+workflow_workspace   = "YOUR_WORKSPACE"
+workflow_version_id  = "YOUR_WORKFLOW_VERSION_ID"
+workflow_fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 # Locally benchmarked candidate envelope. These may be made stricter, but
 # increasing them beyond these values requires a new benchmark and architecture

@@ -36,8 +36,8 @@ maintenance transaction owns the approved terminal-retention policy.
 
 ## Neon
 
-1. In the Neon production organization, create one project named
-   `factorylens-production`, one production branch, and one database named
+1. In the Neon production organization, create one private production project,
+   one production branch, and one database named
    `factorylens`. Select the region nearest the Cloud Run services. Replicas and
    additional branches are outside this deployment.
 2. From Neon **Connection Details**, copy both connection strings for the same

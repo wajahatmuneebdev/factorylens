@@ -123,13 +123,15 @@ jsonPayload.correlationId="JOB_UUID"
 
 Cloud Tasks may redeliver a task, and the worker lease makes that safe. Do not
 manually mark database rows completed or create replacement tasks by hand.
+Set `PROJECT_ID` and `REGION` in the operator's local shell before running the
+commands below; do not store production values in this repository.
 
 1. If repeated deliveries are causing damage, pause dispatch while leaving the
    durable queue intact:
 
    ```sh
    gcloud tasks queues pause factorylens-processing \
-     --location us-east4 --project factorylens-production
+     --location "$REGION" --project "$PROJECT_ID"
    ```
 
 2. Trace one correlation ID and fix the worker, credentials, provider, or
@@ -140,7 +142,7 @@ manually mark database rows completed or create replacement tasks by hand.
 
    ```sh
    gcloud scheduler jobs run factorylens-maintenance \
-     --location us-east4 --project factorylens-production
+     --location "$REGION" --project "$PROJECT_ID"
    ```
 
 4. Confirm `operational_snapshot` reports no unexpected stale lease, resume the
@@ -148,7 +150,7 @@ manually mark database rows completed or create replacement tasks by hand.
 
    ```sh
    gcloud tasks queues resume factorylens-processing \
-     --location us-east4 --project factorylens-production
+     --location "$REGION" --project "$PROJECT_ID"
    ```
 
 Terminal media failures require a user retry after the input is corrected.
@@ -165,19 +167,19 @@ with the current schema. A schema rollback requires a separate reviewed change.
 
    ```sh
    gcloud run revisions list --service factorylens-web \
-     --region us-east4 --project factorylens-production
+     --region "$REGION" --project "$PROJECT_ID"
    gcloud run revisions list --service factorylens-worker \
-     --region us-east4 --project factorylens-production
+     --region "$REGION" --project "$PROJECT_ID"
    ```
 
 2. Route each service to its matching known-good revision:
 
    ```sh
    gcloud run services update-traffic factorylens-worker \
-     --region us-east4 --project factorylens-production \
+     --region "$REGION" --project "$PROJECT_ID" \
      --to-revisions WORKER_REVISION=100
    gcloud run services update-traffic factorylens-web \
-     --region us-east4 --project factorylens-production \
+     --region "$REGION" --project "$PROJECT_ID" \
      --to-revisions WEB_REVISION=100
    ```
 

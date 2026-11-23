@@ -98,8 +98,8 @@ build script used by automation:
 terraform apply -target=google_artifact_registry_repository.images
 
 cd ../..
-project_id=factorylens-production
-region=us-east4
+project_id=YOUR_GCP_PROJECT_ID
+region=YOUR_GCP_REGION
 repository="${region}-docker.pkg.dev/$project_id/factorylens"
 image_version="bootstrap-$(git rev-parse HEAD)"
 

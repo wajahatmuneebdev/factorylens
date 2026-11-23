@@ -40,7 +40,7 @@ FIXTURE_PATH = (
 )
 SAMPLE_RGB_FRAME = bytes(1840 * 1080 * 3)
 PRODUCTION_FINGERPRINT = f"sha256:{'1' * 64}"
-PROVIDER_VERSION_ID = "1794990512449"
+PROVIDER_VERSION_ID = "provider-version-id"
 
 
 @dataclass
